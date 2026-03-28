@@ -519,8 +519,8 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
           </form>
         </aside>
 
-        <main className="flex flex-1 flex-col gap-4">
-          <div className="rounded-3xl border border-pink-200/80 bg-white/90 p-4 shadow-lg">
+        <main className="flex flex-1 flex-col gap-3">
+          <div className="rounded-2xl border border-pink-200/80 bg-white/95 p-3 shadow-md">
             <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground sm:text-sm">
               <div className="flex flex-wrap items-center gap-2">
                 {breadcrumbItems.map((item, index) => {
@@ -555,7 +555,7 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
             </div>
           </div>
 
-          <div className="rounded-3xl border border-pink-200/80 bg-white/90 p-4 shadow-lg">
+          <div className="flex-1 rounded-2xl border border-pink-200/80 bg-white/95 p-3 shadow-md">
             <div className="flex items-center justify-between">
               <div>
                 <h2 className="text-lg font-semibold">{currentLabel}</h2>
@@ -575,13 +575,13 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
             </div>
 
             {files.length === 0 ? (
-              <div className="mt-6 flex flex-col items-center gap-3 rounded-2xl border border-dashed border-pink-200 px-6 py-12 text-center">
+              <div className="mt-4 flex flex-1 flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-pink-200 px-5 py-10 text-center sm:min-h-[300px]">
                 <FolderIcon className="size-8 text-rose-300" />
                 <p className="font-medium">비어 있어요. 파일을 업로드해 보세요.</p>
                 <p className="text-sm text-muted-foreground">새 폴더를 만들고 소중한 순간을 채워보세요.</p>
               </div>
             ) : (
-              <div className="mt-4 overflow-hidden rounded-2xl border border-pink-100">
+              <div className="mt-3 overflow-hidden rounded-2xl border border-pink-100">
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -659,7 +659,7 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
             )}
           </div>
 
-          <div className="hidden rounded-3xl border border-pink-200/80 bg-white/90 p-4 shadow-lg sm:block">
+          <div className="hidden rounded-2xl border border-pink-200/80 bg-white/95 p-3 shadow-md sm:block">
             <div className="flex items-center justify-between">
               <div>
                 <h2 className="text-lg font-semibold">파일 · 폴더 업로드</h2>
@@ -667,11 +667,11 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
               </div>
               <UploadCloudIcon className="size-5 text-rose-400" />
             </div>
-            <div className="mt-4 grid gap-4 lg:grid-cols-2">
-              <form className="space-y-4 rounded-2xl border border-pink-100 p-4" onSubmit={handleFileUploadSubmit}>
+            <div className="mt-3 grid gap-3 lg:grid-cols-2">
+              <form className="space-y-3 rounded-2xl border border-pink-100 p-3" onSubmit={handleFileUploadSubmit}>
                 <input type="hidden" name="folder" value={currentFolder} />
                 <div
-                  className={`rounded-2xl border-2 border-dashed p-6 text-center transition ${fileDropActive ? "border-rose-400 bg-rose-50" : "border-pink-200"}`}
+                  className={`rounded-2xl border-2 border-dashed p-5 text-center transition ${fileDropActive ? "border-rose-400 bg-rose-50" : "border-pink-200"}`}
                   onDragOver={(event) => handleDragOver(event, "file")}
                   onDragLeave={(event) => handleDragLeave(event, "file")}
                   onDrop={(event) => handleDrop(event, "file")}
@@ -697,10 +697,10 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
                 </Button>
               </form>
 
-              <form className="space-y-4 rounded-2xl border border-pink-100 p-4" onSubmit={handleFolderUploadSubmit}>
+              <form className="space-y-3 rounded-2xl border border-pink-100 p-3" onSubmit={handleFolderUploadSubmit}>
                 <input type="hidden" name="folder" value={currentFolder} />
                 <div
-                  className={`rounded-2xl border-2 border-dashed p-6 text-center transition ${folderDropActive ? "border-rose-400 bg-rose-50" : "border-pink-200"}`}
+                  className={`rounded-2xl border-2 border-dashed p-5 text-center transition ${folderDropActive ? "border-rose-400 bg-rose-50" : "border-pink-200"}`}
                   onDragOver={(event) => handleDragOver(event, "folder")}
                   onDragLeave={(event) => handleDragLeave(event, "folder")}
                   onDrop={(event) => handleDrop(event, "folder")}
@@ -735,7 +735,7 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
               </form>
             </div>
             {isUploading && (
-              <div className="mt-4 space-y-2">
+              <div className="mt-3 space-y-2">
                 <div className="flex items-center justify-between text-xs text-muted-foreground">
                   <span>업로드 중...</span>
                   <span>{progress}%</span>
@@ -747,14 +747,14 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
         </main>
       </div>
 
-      <div className="fixed bottom-4 left-1/2 z-20 w-full max-w-md -translate-x-1/2 space-y-2 px-4 sm:hidden">
-        <div className="rounded-3xl border border-pink-200/80 bg-white/95 px-4 py-4 shadow-lg">
+      <div className="fixed bottom-3 left-1/2 z-20 w-full max-w-md -translate-x-1/2 px-4 sm:hidden">
+        <div className="rounded-2xl border border-pink-200/70 bg-white/95 px-3 py-3 shadow-md">
           <div className="flex items-center justify-between text-xs font-semibold text-muted-foreground">
             <span>빠른 업로드</span>
             <span>{currentLabel || "루트"}</span>
           </div>
-          <p className="mt-1 text-xs text-muted-foreground">선택 즉시 업로드돼요.</p>
-          <div className="mt-3 grid grid-cols-2 gap-2">
+          <p className="mt-1 text-[11px] text-muted-foreground">선택 즉시 업로드돼요.</p>
+          <div className="mt-2 grid grid-cols-2 gap-2">
             <Button
               size="sm"
               className="rounded-2xl"

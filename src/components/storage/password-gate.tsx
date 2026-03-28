@@ -83,41 +83,41 @@ export function PasswordGate() {
         <div className="absolute bottom-[-15%] right-[-10%] h-[26rem] w-[26rem] rounded-full bg-rose-400/40 blur-[160px]" />
       </div>
 
-      <div className="relative flex flex-1 flex-col gap-6 px-6 py-8 sm:px-10 lg:px-16">
-        <div className="mx-auto mt-6 w-full max-w-md space-y-4 text-left lg:ml-0 lg:mt-auto lg:max-w-xl">
+      <div className="relative flex flex-1 flex-col gap-4 px-5 py-6 sm:px-9 lg:px-14">
+        <div className="mx-auto mt-4 w-full max-w-md space-y-3 text-left lg:ml-0 lg:mt-auto lg:max-w-xl">
           <p className="text-xs uppercase tracking-[0.35em] text-rose-400">Private Vault</p>
-          <h1 className="text-4xl font-semibold leading-tight tracking-tight sm:text-5xl">지현아 반가워.</h1>
-          <p className="text-sm text-muted-foreground sm:text-base">
+          <h1 className="text-[34px] font-semibold leading-tight tracking-tight sm:text-[42px]">지현아 반가워.</h1>
+          <p className="text-sm text-muted-foreground">
             우리 둘만의 작은 금고예요. 휴대폰에서도 바로 열 수 있도록 비밀번호 패드를 한쪽에 고정했어요.
           </p>
         </div>
-        <div className="mb-auto hidden text-sm text-rose-500/70 lg:block">네 자리 기억나면 언제든 바로 열리니까 걱정 마.</div>
+        <div className="mb-auto hidden text-xs text-rose-500/70 lg:block">네 자리 기억나면 언제든 바로 열리니까 걱정 마.</div>
       </div>
 
-      <aside className="relative flex h-full w-full max-w-full flex-col border-white/30 bg-white/95 px-5 py-8 shadow-[0_35px_120px_rgba(244,114,182,0.35)] backdrop-blur-xl sm:px-8 lg:max-w-md lg:border-l lg:rounded-l-[48px]">
-        <div className="flex items-center justify-between text-xs uppercase tracking-[0.35em] text-rose-400">
+      <aside className="relative flex h-full w-full max-w-full flex-col border-white/30 bg-white/95 px-4 py-6 shadow-[0_28px_100px_rgba(244,114,182,0.28)] backdrop-blur-xl sm:px-6 lg:max-w-md lg:border-l lg:rounded-l-[44px]">
+        <div className="flex items-center justify-between text-[11px] uppercase tracking-[0.3em] text-rose-400">
           <span>Access Keypad</span>
           <span>{ready ? "Ready" : `${PIN_LENGTH}-digit`}</span>
         </div>
 
-        <div className="mt-6 space-y-5">
-          <div className="rounded-3xl border border-dashed border-rose-200/60 bg-gradient-to-r from-pink-300/25 via-rose-100/40 to-pink-200/30 p-5 text-center shadow-inner shadow-rose-100/60">
+        <div className="mt-5 space-y-4">
+          <div className="rounded-2xl border border-dashed border-rose-200/60 bg-gradient-to-r from-pink-300/25 via-rose-100/40 to-pink-200/30 p-4 text-center shadow-inner shadow-rose-100/60">
             <p className="text-xs uppercase tracking-[0.3em] text-muted-foreground">Private PIN</p>
-            <div className="mt-3 flex justify-center gap-3 font-mono text-3xl">
+            <div className="mt-2 flex justify-center gap-2 font-mono text-2xl">
               {maskedDigits.map((digit, index) => (
                 <span
                   key={`${digit}-${index}`}
-                  className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white/70 text-foreground shadow-inner shadow-black/10"
+                  className="flex h-10 w-10 items-center justify-center rounded-2xl bg-white/75 text-foreground shadow-inner shadow-black/10"
                 >
                   {digit}
                 </span>
               ))}
             </div>
-            <p className="mt-3 text-xs text-muted-foreground">숫자 {PIN_LENGTH}자리만 기억나면 돼</p>
+            <p className="mt-2 text-xs text-muted-foreground">숫자 {PIN_LENGTH}자리만 기억나면 돼</p>
           </div>
 
-          <form onSubmit={handleSubmit} className="space-y-6">
-            <div className="space-y-2">
+          <form onSubmit={handleSubmit} className="space-y-5">
+            <div className="space-y-1.5">
               <Label htmlFor="password" className="text-sm font-medium text-rose-500">
                 비밀번호 입력
               </Label>
@@ -135,7 +135,7 @@ export function PasswordGate() {
                   placeholder={`숫자 ${PIN_LENGTH}자리`}
                   required
                   disabled={pending}
-                  className="rounded-2xl border-2 border-transparent bg-gradient-to-r from-pink-200/60 via-white/70 to-rose-100/70 text-center text-xl tracking-[0.4em] text-foreground shadow-inner shadow-rose-200/80 focus-visible:border-pink-400"
+                  className="rounded-2xl border border-transparent bg-gradient-to-r from-pink-200/60 via-white/70 to-rose-100/70 text-center text-lg tracking-[0.35em] text-foreground shadow-inner shadow-rose-200/70 focus-visible:border-pink-400"
                 />
                 <Button
                   type="button"
@@ -149,11 +149,11 @@ export function PasswordGate() {
                   {visible ? <EyeOffIcon className="size-4" /> : <EyeIcon className="size-4" />}
                 </Button>
               </div>
-              <p className="text-xs text-muted-foreground">네 자리 채우면 자동으로 문이 열립니다.</p>
+              <p className="text-[11px] text-muted-foreground">네 자리 채우면 자동으로 문이 열립니다.</p>
             </div>
 
             {error ? (
-              <p className="rounded-2xl border border-destructive/40 bg-destructive/10 px-4 py-2 text-sm text-destructive">
+              <p className="rounded-2xl border border-destructive/40 bg-destructive/10 px-3 py-2 text-[13px] text-destructive">
                 {error}
               </p>
             ) : null}
