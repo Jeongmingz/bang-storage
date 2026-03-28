@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, useTransition, type ChangeEvent } from "react";
+import { useEffect, useRef, useState, useTransition, type ChangeEvent } from "react";
 import { useRouter } from "next/navigation";
 import { EyeIcon, EyeOffIcon } from "lucide-react";
 import { toast } from "sonner";
@@ -28,31 +28,28 @@ export function PasswordGate() {
     setError(null);
   };
 
-  const submitPassword = useCallback(
-    (password: string) => {
-      if (password.length !== PIN_LENGTH || pending) return;
+  const submitPassword = (password: string) => {
+    if (password.length !== PIN_LENGTH || pending) return;
 
-      lastSubmitted.current = password;
-      const formData = new FormData();
-      formData.set("password", password);
+    lastSubmitted.current = password;
+    const formData = new FormData();
+    formData.set("password", password);
 
-      startTransition(() => {
-        authenticate(formData).then((result) => {
-          if (result.success) {
-            toast.success(result.message ?? "잠금 해제 완료");
-            setValue("");
-            router.refresh();
-          } else {
-            setError(result.message);
-            toast.error(result.message);
-            setValue("");
-            lastSubmitted.current = null;
-          }
-        });
+    startTransition(() => {
+      authenticate(formData).then((result) => {
+        if (result.success) {
+          toast.success(result.message ?? "잠금 해제 완료");
+          setValue("");
+          router.refresh();
+        } else {
+          setError(result.message);
+          toast.error(result.message);
+          setValue("");
+          lastSubmitted.current = null;
+        }
       });
-    },
-    [pending, router],
-  );
+    });
+  };
 
   const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -63,7 +60,8 @@ export function PasswordGate() {
     if (ready && !pending && lastSubmitted.current !== value) {
       submitPassword(value);
     }
-  }, [ready, pending, value, submitPassword]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready, pending, value]);
 
   const maskedDigits = Array.from({ length: PIN_LENGTH }).map((_, index) => value[index] ?? "•");
 

@@ -1,6 +1,7 @@
 import "server-only";
 
 import {
+  CopyObjectCommand,
   DeleteObjectCommand,
   DeleteObjectsCommand,
   GetObjectCommand,
@@ -43,6 +44,7 @@ function getClient() {
     client = new S3Client({
       region: "auto",
       endpoint: ENDPOINT,
+      forcePathStyle: true,
       credentials: {
         accessKeyId: ACCESS_KEY_ID,
         secretAccessKey: SECRET_ACCESS_KEY,
@@ -57,7 +59,7 @@ function normalizePath(path?: string) {
   return path.replace(/\\+/g, "/").replace(/^\/+|\/+$/g, "");
 }
 
-function encodeKey(path: string) {
+function encodePathForUrl(path: string) {
   return path
     .split("/")
     .filter(Boolean)
@@ -65,23 +67,17 @@ function encodeKey(path: string) {
     .join("/");
 }
 
-function decodeKey(path: string) {
-  return path
-    .split("/")
-    .filter(Boolean)
-    .map((segment) => {
-      try {
-        return decodeURIComponent(segment);
-      } catch {
-        return segment;
-      }
-    })
-    .join("/");
+function decodeSegment(value: string) {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
 }
 
 export async function listEntries(path?: string): Promise<StorageSnapshot> {
   const prefix = normalizePath(path);
-  const keyPrefix = prefix ? encodeKey(prefix) + "/" : undefined;
+  const keyPrefix = prefix ? `${prefix}/` : undefined;
   const s3 = getClient();
   let ContinuationToken: string | undefined;
   const folders = new Set<string>();
@@ -99,34 +95,33 @@ export async function listEntries(path?: string): Promise<StorageSnapshot> {
 
     for (const prefixObj of CommonPrefixes ?? []) {
       if (!prefixObj.Prefix) continue;
-      const raw = prefixObj.Prefix.replace(keyPrefix ?? "", "").replace(/\/$/, "");
-      const decodedFolder = decodeKey(raw);
-      if (decodedFolder) folders.add(decodedFolder);
+      const folderName = prefixObj.Prefix.replace(keyPrefix ?? "", "").replace(/\/$/, "");
+      if (folderName) folders.add(decodeSegment(folderName));
     }
 
     for (const item of Contents) {
       if (!item.Key) continue;
-      const decoded = decodeKey(item.Key);
+      const decoded = item.Key;
       if (decoded.endsWith("/.keep")) {
         const folderName = decoded.replace(prefix ? `${prefix}/` : "", "").replace("/.keep", "");
         if (folderName) {
-          folders.add(folderName);
+          folders.add(decodeSegment(folderName));
         }
         continue;
       }
       const relative = prefix ? decoded.replace(`${prefix}/`, "") : decoded;
       if (relative.includes("/")) {
-        folders.add(relative.split("/")[0]);
+        folders.add(decodeSegment(relative.split("/")[0]));
         continue;
       }
       files.push({
         id: item.Key,
-        name: relative,
+        name: decodeSegment(relative),
         path: prefix ? `${prefix}/${relative}` : relative,
         size: Number(item.Size ?? 0),
         createdAt: item.LastModified?.toISOString() ?? new Date().toISOString(),
         updatedAt: item.LastModified?.toISOString() ?? new Date().toISOString(),
-        publicUrl: `${ENDPOINT}/${BUCKET}/${encodeKey(prefix ? `${prefix}/${relative}` : relative)}`,
+        publicUrl: `${(ENDPOINT ?? "").replace(/\/$/, "")}/${BUCKET ?? ""}/${encodePathForUrl(prefix ? `${prefix}/${relative}` : relative)}`,
       });
     }
 
@@ -141,7 +136,7 @@ export async function deleteFile(path: string) {
   await s3.send(
     new DeleteObjectCommand({
       Bucket: BUCKET,
-      Key: encodeKey(path),
+      Key: path,
     }),
   );
 }
@@ -151,7 +146,7 @@ export async function deleteFolder(path: string) {
   if (!prefix) throw new Error("루트는 삭제할 수 없습니다.");
 
   const s3 = getClient();
-  const keyPrefix = encodeKey(prefix);
+  const keyPrefix = prefix;
   let ContinuationToken: string | undefined;
   const keys: string[] = [];
 
@@ -191,34 +186,32 @@ export async function createFolder(options: { name: string; parent?: string }) {
   await s3.send(
     new PutObjectCommand({
       Bucket: BUCKET,
-      Key: `${encodeKey(fullPath)}/.keep`,
+      Key: `${fullPath}/.keep`,
       Body: "",
       ContentType: "text/plain",
     }),
   );
 }
 
-export async function uploadBuffer(options: {
+export async function prepareUploadTarget(options: {
   fileName: string;
   folder?: string;
-  buffer: Buffer;
   contentType?: string;
+  expiresIn?: number;
 }) {
-  const { fileName, folder, buffer, contentType } = options;
+  const { fileName, folder, contentType, expiresIn = 60 * 5 } = options;
   const folderPrefix = normalizePath(folder);
-  const basePath = folderPrefix ? `${folderPrefix}/${fileName}` : fileName;
-  const s3 = getClient();
-
   const extensionMatch = fileName.match(/(.*)(\.[^.]*)$/);
   const nameWithoutExt = extensionMatch ? extensionMatch[1] : fileName;
   const ext = extensionMatch ? extensionMatch[2] : "";
-
-  let candidatePath = basePath;
+  let candidatePath = folderPrefix ? `${folderPrefix}/${fileName}` : fileName;
   let counter = 1;
+
+  const s3 = getClient();
 
   while (true) {
     try {
-      await s3.send(new HeadObjectCommand({ Bucket: BUCKET, Key: encodeKey(candidatePath) }));
+      await s3.send(new HeadObjectCommand({ Bucket: BUCKET, Key: candidatePath }));
       const nextName = `${nameWithoutExt}(${counter})${ext}`;
       candidatePath = folderPrefix ? `${folderPrefix}/${nextName}` : nextName;
       counter += 1;
@@ -231,22 +224,80 @@ export async function uploadBuffer(options: {
     }
   }
 
-  await s3.send(
-    new PutObjectCommand({
-      Bucket: BUCKET,
-      Key: encodeKey(candidatePath),
-      Body: buffer,
-      ContentType: contentType,
-    }),
-  );
+  const command = new PutObjectCommand({
+    Bucket: BUCKET,
+    Key: candidatePath,
+    ContentType: contentType,
+  });
+  const uploadUrl = await getSignedUrl(s3, command, { expiresIn });
+  const publicUrl = `${(ENDPOINT ?? "").replace(/\/$/, "")}/${BUCKET ?? ""}/${encodePathForUrl(candidatePath)}`;
+
+  return {
+    path: candidatePath,
+    uploadUrl,
+    publicUrl,
+  };
 }
 
 export async function createSignedDownloadUrl(path: string, expiresInSeconds = 60 * 5) {
   const s3 = getClient();
-  const command = new GetObjectCommand({ Bucket: BUCKET, Key: encodeKey(path) });
+  const command = new GetObjectCommand({ Bucket: BUCKET, Key: path });
   return getSignedUrl(s3, command, { expiresIn: expiresInSeconds });
 }
 
 export function getBucketLabel() {
   return BUCKET ?? "";
+}
+
+export async function renameObject(options: { path: string; newName: string }) {
+  const { path, newName } = options;
+  const cleanName = newName.trim().replace(/[\\/]+/g, "-");
+  if (!cleanName) {
+    throw new Error("새 이름을 입력하세요.");
+  }
+
+  const parts = path.split("/").filter(Boolean);
+  if (parts.length === 0) {
+    throw new Error("잘못된 경로입니다.");
+  }
+  parts.pop();
+  const parent = parts.join("/");
+
+  const match = cleanName.match(/(.*)(\.[^.]*)$/);
+  const nameWithoutExt = match ? match[1] : cleanName;
+  const ext = match ? match[2] : "";
+
+  let candidate = parent ? `${parent}/${cleanName}` : cleanName;
+  let counter = 1;
+  const s3 = getClient();
+
+  while (true) {
+    if (candidate === path) break;
+    try {
+      await s3.send(new HeadObjectCommand({ Bucket: BUCKET, Key: candidate }));
+      const nextName = `${nameWithoutExt}(${counter})${ext}`;
+      candidate = parent ? `${parent}/${nextName}` : nextName;
+      counter += 1;
+    } catch (error) {
+      const status = (error as { $metadata?: { httpStatusCode?: number } })?.$metadata?.httpStatusCode;
+      if (status === 404) {
+        break;
+      }
+      throw error;
+    }
+  }
+
+  if (candidate !== path) {
+    await s3.send(
+      new CopyObjectCommand({
+        Bucket: BUCKET,
+        CopySource: `${BUCKET}/${encodePathForUrl(path)}`,
+        Key: candidate,
+        MetadataDirective: "COPY",
+      }),
+    );
+    await deleteFile(path);
+  }
+
+  return candidate;
 }

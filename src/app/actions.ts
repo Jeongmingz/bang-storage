@@ -15,7 +15,8 @@ import {
   deleteFolder,
   getBucketLabel,
   listEntries,
-  uploadBuffer,
+  prepareUploadTarget,
+  renameObject,
 } from "@/lib/storage";
 
 export type ActionResult<T = Record<string, unknown>> =
@@ -56,47 +57,33 @@ export async function logout(): Promise<ActionResult> {
   return { success: true, message: "로그아웃했습니다." };
 }
 
-export async function uploadFiles(formData: FormData): Promise<ActionResult<{ snapshot: Awaited<ReturnType<typeof listEntries>> }>> {
+export async function createUploadUrl(formData: FormData): Promise<ActionResult<{ uploadUrl: string; path: string; publicUrl: string }>> {
   const auth = await ensureAuth();
   if (auth !== true) {
-    return auth as ActionResult<{ snapshot: Awaited<ReturnType<typeof listEntries>> }>;
+    return auth as ActionResult<{ uploadUrl: string; path: string; publicUrl: string }>;
   }
 
+  const fileName = formData.get("fileName");
   const folder = formData.get("folder");
-  const files = formData
-    .getAll("files")
-    .filter((entry): entry is File => entry instanceof File && entry.size > 0);
+  const contentType = formData.get("contentType");
 
-  if (files.length === 0) {
-    return { success: false, message: "업로드할 파일을 선택하세요." };
+  if (typeof fileName !== "string" || fileName.length === 0) {
+    return { success: false, message: "파일 이름이 필요합니다." };
   }
 
   try {
-    for (const file of files) {
-      const buffer = Buffer.from(await file.arrayBuffer());
-      await uploadBuffer({
-        fileName: file.name,
-        folder: typeof folder === "string" ? folder : undefined,
-        buffer,
-        contentType: file.type || undefined,
-      });
-    }
+    const target = await prepareUploadTarget({
+      fileName,
+      folder: typeof folder === "string" && folder.length > 0 ? folder : undefined,
+      contentType: typeof contentType === "string" ? contentType : undefined,
+    });
+    return { success: true, uploadUrl: target.uploadUrl, path: target.path, publicUrl: target.publicUrl };
   } catch (error) {
     return {
       success: false,
-      message: error instanceof Error ? error.message : "업로드 중 오류가 발생했습니다.",
+      message: error instanceof Error ? error.message : "업로드 URL을 만들지 못했습니다.",
     };
   }
-
-  const path = typeof folder === "string" ? folder : undefined;
-  const updated = await listEntries(path);
-  revalidatePath("/");
-
-  return {
-    success: true,
-    message: `${files.length}개의 파일을 업로드했습니다.`,
-    snapshot: updated,
-  };
 }
 
 export async function deleteFileAction(path: string, currentFolder?: string): Promise<ActionResult<{ snapshot: Awaited<ReturnType<typeof listEntries>> }>> {
@@ -198,4 +185,24 @@ export async function deleteFolderAction(path: string): Promise<ActionResult<{ s
   const snapshot = await listEntries(parent || undefined);
   revalidatePath("/");
   return { success: true, message: "폴더를 삭제했습니다.", snapshot };
+}
+
+export async function renameFileAction(path: string, newName: string, currentFolder?: string): Promise<ActionResult<{ snapshot: Awaited<ReturnType<typeof listEntries>> }>> {
+  const auth = await ensureAuth();
+  if (auth !== true) {
+    return auth as ActionResult<{ snapshot: Awaited<ReturnType<typeof listEntries>> }>;
+  }
+
+  try {
+    await renameObject({ path, newName });
+  } catch (error) {
+    return {
+      success: false,
+      message: error instanceof Error ? error.message : "파일 이름을 바꾸지 못했습니다.",
+    };
+  }
+
+  const snapshot = await listEntries(currentFolder);
+  revalidatePath("/");
+  return { success: true, message: "이름을 변경했습니다.", snapshot };
 }
