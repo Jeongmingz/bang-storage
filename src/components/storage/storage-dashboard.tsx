@@ -112,6 +112,7 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
   const [isMobile, setIsMobile] = useState(false);
   const [fileDropActive, setFileDropActive] = useState(false);
   const [folderDropActive, setFolderDropActive] = useState(false);
+  const [quickUploadMode, setQuickUploadMode] = useState<"file" | "folder" | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
 
@@ -137,19 +138,45 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
   };
 
   const handleFileSelectionChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const list = Array.from(event.target.files ?? []);
-    setFileSelection(list.map((file) => `${file.name} · ${formatSize(file.size)}`));
+    const rawFiles = Array.from(event.target.files ?? []);
+    setFileSelection(rawFiles.map((file) => `${file.name} · ${formatSize(file.size)}`));
+
+    if (quickUploadMode === "file") {
+      const files = rawFiles.filter((file) => file.size > 0);
+      if (files.length > 0) {
+        uploadFilesWithMode(files, false).finally(() => {
+          setQuickUploadMode(null);
+          setFileSelection([]);
+          if (fileInputRef.current) fileInputRef.current.value = "";
+        });
+      } else {
+        setQuickUploadMode(null);
+      }
+    }
   };
 
   const handleFolderSelectionChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const list = Array.from(event.target.files ?? []);
+    const rawFiles = Array.from(event.target.files ?? []);
     setFolderSelection(
-      list.map((file) => {
+      rawFiles.map((file) => {
         const relativeFolder = deriveRelativeFolder(currentFolder ?? "", file.webkitRelativePath);
         const label = relativeFolder ? `${relativeFolder}/${file.name}` : file.name;
         return `${label} · ${formatSize(file.size)}`;
       }),
     );
+
+    if (quickUploadMode === "folder") {
+      const files = rawFiles.filter((file) => file.size > 0);
+      if (files.length > 0) {
+        uploadFilesWithMode(files, true).finally(() => {
+          setQuickUploadMode(null);
+          setFolderSelection([]);
+          if (folderInputRef.current) folderInputRef.current.value = "";
+        });
+      } else {
+        setQuickUploadMode(null);
+      }
+    }
   };
 
   const uploadFilesWithMode = async (files: File[], useRelativePaths: boolean) => {
@@ -288,6 +315,16 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
     });
   };
 
+  const handleQuickPick = (mode: "file" | "folder") => {
+    if (isUploading) return;
+    setQuickUploadMode(mode);
+    if (mode === "file") {
+      fileInputRef.current?.click();
+    } else {
+      folderInputRef.current?.click();
+    }
+  };
+
   const handleGenerateLink = (path: string, copyToClipboard = false) => {
     startMutate(() => {
       generateDownloadLink(path).then(async (result) => {
@@ -415,7 +452,7 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
         <aside className="flex w-full flex-col gap-4 rounded-3xl border border-pink-200/80 bg-white/90 p-4 shadow-lg lg:w-72">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-xs uppercase tracking-[0.3em] text-rose-400">Bucket</p>
+              <p className="text-xs uppercase tracking-[0.3em] text-rose-400">지현&정민 저장소</p>
               <p className="text-base font-semibold text-foreground">{bucket}</p>
             </div>
             <Button variant="ghost" size="icon" onClick={handleLogout}>
@@ -460,9 +497,9 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
                         </DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>
-                 </div>
-               );
-             })}
+                  </div>
+                );
+              })}
             </div>
           </div>
           <form onSubmit={handleCreateFolder} className="mt-auto space-y-2">
@@ -493,11 +530,10 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
                       <button
                         type="button"
                         onClick={() => handleRefresh(item.path)}
-                        className={`rounded-full px-3 py-1 font-medium transition ${
-                          isLast
+                        className={`rounded-full px-3 py-1 font-medium transition ${isLast
                             ? "bg-rose-100 text-rose-500"
                             : "text-muted-foreground hover:bg-rose-50 hover:text-rose-500"
-                        }`}
+                          }`}
                       >
                         {item.label}
                       </button>
@@ -623,7 +659,7 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
             )}
           </div>
 
-          <div className="rounded-3xl border border-pink-200/80 bg-white/90 p-4 shadow-lg">
+          <div className="hidden rounded-3xl border border-pink-200/80 bg-white/90 p-4 shadow-lg sm:block">
             <div className="flex items-center justify-between">
               <div>
                 <h2 className="text-lg font-semibold">파일 · 폴더 업로드</h2>
@@ -709,6 +745,34 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
             )}
           </div>
         </main>
+      </div>
+
+      <div className="fixed bottom-4 left-1/2 z-20 w-full max-w-md -translate-x-1/2 space-y-2 px-4 sm:hidden">
+        <div className="rounded-3xl border border-pink-200/80 bg-white/95 px-4 py-4 shadow-lg">
+          <div className="flex items-center justify-between text-xs font-semibold text-muted-foreground">
+            <span>빠른 업로드</span>
+            <span>{currentLabel || "루트"}</span>
+          </div>
+          <p className="mt-1 text-xs text-muted-foreground">선택 즉시 업로드돼요.</p>
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            <Button
+              size="sm"
+              className="rounded-2xl"
+              disabled={isUploading}
+              onClick={() => handleQuickPick("file")}
+            >
+              {isUploading && quickUploadMode === "file" ? "업로드 중" : "파일 선택"}
+            </Button>
+            <Button
+              size="sm"
+              className="rounded-2xl"
+              disabled={isUploading}
+              onClick={() => handleQuickPick("folder")}
+            >
+              {isUploading && quickUploadMode === "folder" ? "업로드 중" : "폴더 선택"}
+            </Button>
+          </div>
+        </div>
       </div>
 
       <Dialog open={Boolean(previewFile)} onOpenChange={(open) => (!open ? setPreviewFile(null) : null)}>
