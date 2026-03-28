@@ -107,6 +107,31 @@ export async function deleteFileAction(path: string, currentFolder?: string): Pr
   return { success: true, message: "파일을 삭제했습니다.", snapshot: updated };
 }
 
+export async function deleteFilesAction(paths: string[], currentFolder?: string): Promise<ActionResult<{ snapshot: Awaited<ReturnType<typeof listEntries>> }>> {
+  const auth = await ensureAuth();
+  if (auth !== true) {
+    return auth as ActionResult<{ snapshot: Awaited<ReturnType<typeof listEntries>> }>;
+  }
+
+  const uniquePaths = [...new Set(paths)].filter((path) => Boolean(path));
+
+  try {
+    for (const path of uniquePaths) {
+      await deleteFile(path);
+    }
+  } catch (error) {
+    return {
+      success: false,
+      message: error instanceof Error ? error.message : "삭제에 실패했습니다.",
+    };
+  }
+
+  const updated = await listEntries(currentFolder);
+  revalidatePath("/");
+
+  return { success: true, message: "파일을 삭제했습니다.", snapshot: updated };
+}
+
 export async function generateDownloadLink(path: string): Promise<ActionResult<{ url: string }>> {
   const auth = await ensureAuth();
   if (auth !== true) {

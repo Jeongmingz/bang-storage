@@ -84,14 +84,14 @@ export function PasswordGate() {
       </div>
 
       <div className="relative flex flex-1 flex-col gap-4 px-5 py-6 sm:px-9 lg:px-14">
-        <div className="mx-auto mt-4 w-full max-w-md space-y-3 text-left lg:ml-0 lg:mt-auto lg:max-w-xl">
-          <p className="text-xs uppercase tracking-[0.35em] text-rose-400">Private Vault</p>
-          <h1 className="text-[34px] font-semibold leading-tight tracking-tight sm:text-[42px]">지현아 반가워.</h1>
-          <p className="text-sm text-muted-foreground">
+        <div className="mx-auto mt-3 w-full max-w-md space-y-2 text-left lg:ml-0 lg:mt-auto lg:max-w-xl">
+          <p className="text-[10px] uppercase tracking-[0.3em] text-rose-400">Private Vault</p>
+          <h1 className="text-[26px] font-semibold leading-tight tracking-tight sm:text-[40px]">지현아 반가워.</h1>
+          <p className="text-[12px] text-muted-foreground">
             우리 둘만의 작은 금고예요. 휴대폰에서도 바로 열 수 있도록 비밀번호 패드를 한쪽에 고정했어요.
           </p>
         </div>
-        <div className="mb-auto hidden text-xs text-rose-500/70 lg:block">네 자리 기억나면 언제든 바로 열리니까 걱정 마.</div>
+        <div className="mb-auto hidden text-[11px] text-rose-500/70 lg:block">네 자리 기억나면 언제든 바로 열리니까 걱정 마.</div>
       </div>
 
       <aside className="relative flex h-full w-full max-w-full flex-col border-white/30 bg-white/95 px-4 py-6 shadow-[0_28px_100px_rgba(244,114,182,0.28)] backdrop-blur-xl sm:px-6 lg:max-w-md lg:border-l lg:rounded-l-[44px]">
@@ -100,10 +100,10 @@ export function PasswordGate() {
           <span>{ready ? "Ready" : `${PIN_LENGTH}-digit`}</span>
         </div>
 
-        <div className="mt-5 space-y-4">
+        <div className="mt-4 space-y-3.5">
           <div className="rounded-2xl border border-dashed border-rose-200/60 bg-gradient-to-r from-pink-300/25 via-rose-100/40 to-pink-200/30 p-4 text-center shadow-inner shadow-rose-100/60">
             <p className="text-xs uppercase tracking-[0.3em] text-muted-foreground">Private PIN</p>
-            <div className="mt-2 flex justify-center gap-2 font-mono text-2xl">
+            <div className="mt-1.5 flex justify-center gap-1.5 font-mono text-xl">
               {maskedDigits.map((digit, index) => (
                 <span
                   key={`${digit}-${index}`}
@@ -116,8 +116,8 @@ export function PasswordGate() {
             <p className="mt-2 text-xs text-muted-foreground">숫자 {PIN_LENGTH}자리만 기억나면 돼</p>
           </div>
 
-          <form onSubmit={handleSubmit} className="space-y-5">
-            <div className="space-y-1.5">
+          <form onSubmit={handleSubmit} className="space-y-3.5">
+            <div className="space-y-1">
               <Label htmlFor="password" className="text-sm font-medium text-rose-500">
                 비밀번호 입력
               </Label>
@@ -135,7 +135,7 @@ export function PasswordGate() {
                   placeholder={`숫자 ${PIN_LENGTH}자리`}
                   required
                   disabled={pending}
-                  className="rounded-2xl border border-transparent bg-gradient-to-r from-pink-200/60 via-white/70 to-rose-100/70 text-center text-lg tracking-[0.35em] text-foreground shadow-inner shadow-rose-200/70 focus-visible:border-pink-400"
+                  className="rounded-2xl border border-transparent bg-gradient-to-r from-pink-200/60 via-white/70 to-rose-100/70 text-center text-sm tracking-[0.28em] text-foreground shadow-inner shadow-rose-200/70 focus-visible:border-pink-400"
                 />
                 <Button
                   type="button"
@@ -158,7 +158,7 @@ export function PasswordGate() {
               </p>
             ) : null}
 
-            <div className="flex items-center gap-3 text-sm text-rose-400">
+            <div className="flex items-center gap-2 text-xs text-rose-400">
               <span className="flex-1 text-left">숫자만 눌러주면 바로 열어줄게.</span>
               <Button
                 type="submit"

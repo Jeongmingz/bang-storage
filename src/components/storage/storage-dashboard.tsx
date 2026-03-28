@@ -11,13 +11,10 @@ import {
 import { useRouter } from "next/navigation";
 import {
   ArrowLeftIcon,
-  CopyIcon,
   FolderIcon,
   FolderPlusIcon,
-  LinkIcon,
   LogOutIcon,
   MoreHorizontalIcon,
-  PlusIcon,
   RefreshCcwIcon,
   Trash2Icon,
   UploadCloudIcon,
@@ -27,7 +24,7 @@ import { toast } from "sonner";
 import {
   createFolderAction,
   createUploadUrl,
-  deleteFileAction,
+  deleteFilesAction,
   deleteFolderAction,
   generateDownloadLink,
   logout,
@@ -109,15 +106,17 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
   const [previewFile, setPreviewFile] = useState<StorageFile | null>(null);
   const [renameTarget, setRenameTarget] = useState<StorageFile | null>(null);
   const [renameValue, setRenameValue] = useState("");
-  const [isMobile, setIsMobile] = useState(false);
   const [fileDropActive, setFileDropActive] = useState(false);
   const [folderDropActive, setFolderDropActive] = useState(false);
   const [quickUploadMode, setQuickUploadMode] = useState<"file" | "folder" | null>(null);
+  const [fileUrls, setFileUrls] = useState<Record<string, { url: string; expiresAt: number }>>({});
+  const [selectedFileIds, setSelectedFileIds] = useState<Set<string>>(new Set());
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
 
   const files = snapshot.files;
   const folders = snapshot.folders;
+  const visibleFolders = folders.filter((folder) => !folder.startsWith(".keep"));
 
 
   const handleUnauthorized = useCallback(
@@ -301,20 +300,6 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
     }
   };
 
-  const handleDelete = (path: string) => {
-    startMutate(() => {
-      deleteFileAction(path, currentFolder).then((result) => {
-        if (result.success && result.snapshot) {
-          handleSnapshotUpdate(result.snapshot);
-          toast.success("파일을 삭제했습니다.");
-        } else if (!result.success) {
-          toast.error(result.message);
-          handleUnauthorized(result.message);
-        }
-      });
-    });
-  };
-
   const handleQuickPick = (mode: "file" | "folder") => {
     if (isUploading) return;
     setQuickUploadMode(mode);
@@ -325,16 +310,116 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
     }
   };
 
-  const handleGenerateLink = (path: string, copyToClipboard = false) => {
+  const getCachedUrl = useCallback(
+    (file: StorageFile) => {
+      const record = fileUrls[file.id];
+      if (!record) return null;
+      if (record.expiresAt > Date.now()) return record.url;
+      return null;
+    },
+    [fileUrls],
+  );
+
+  const fetchDownloadUrl = useCallback(
+    async (file: StorageFile) => {
+      const cached = getCachedUrl(file);
+      if (cached) return cached;
+
+      const result = await generateDownloadLink(file.path);
+      if (result.success && result.url) {
+        setFileUrls((prev) => ({
+          ...prev,
+          [file.id]: {
+            url: result.url,
+            expiresAt: Date.now() + 4 * 60 * 1000,
+          },
+        }));
+        return result.url;
+      }
+      if (!result.success) {
+        toast.error(result.message);
+        handleUnauthorized(result.message);
+      }
+      return null;
+    },
+    [getCachedUrl, handleUnauthorized],
+  );
+
+  const handleGenerateLink = (file: StorageFile, copyToClipboard = false) => {
     startMutate(() => {
-      generateDownloadLink(path).then(async (result) => {
-        if (result.success && result.url) {
-          if (copyToClipboard) {
-            await navigator.clipboard.writeText(result.url);
-            toast.success("다운로드 링크를 복사했습니다.");
-          } else {
-            window.open(result.url, "_blank");
-          }
+      fetchDownloadUrl(file).then(async (url) => {
+        if (!url) return;
+        if (copyToClipboard) {
+          await navigator.clipboard.writeText(url);
+          toast.success("링크를 복사했습니다.");
+        } else {
+          window.open(url, "_blank");
+        }
+      });
+    });
+  };
+
+  useEffect(() => {
+    if (previewFile && isImageFile(previewFile)) {
+      fetchDownloadUrl(previewFile);
+    }
+  }, [previewFile, fetchDownloadUrl]);
+
+  useEffect(() => {
+    setSelectedFileIds(new Set());
+  }, [currentFolder]);
+
+  useEffect(() => {
+    const missing = files.filter((file) => isImageFile(file) && !getCachedUrl(file));
+    if (missing.length === 0) return;
+    missing.forEach((file) => {
+      fetchDownloadUrl(file);
+    });
+  }, [files, getCachedUrl, fetchDownloadUrl]);
+
+  const getPreviewUrl = (file: StorageFile) => {
+    if (!isImageFile(file)) return null;
+    return getCachedUrl(file);
+  };
+
+  const selectedFiles = useMemo(() => files.filter((file) => selectedFileIds.has(file.id)), [files, selectedFileIds]);
+  const selectedCount = selectedFiles.length;
+  const allSelected = files.length > 0 && selectedCount === files.length;
+
+  const toggleFileSelection = (fileId: string) => {
+    setSelectedFileIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(fileId)) {
+        next.delete(fileId);
+      } else {
+        next.add(fileId);
+      }
+      return next;
+    });
+  };
+
+  const handleSelectAll = () => {
+    setSelectedFileIds((prev) => {
+      if (files.every((file) => prev.has(file.id))) {
+        return new Set();
+      }
+      return new Set(files.map((file) => file.id));
+    });
+  };
+
+  const clearSelection = () => setSelectedFileIds(new Set());
+
+  const handleBulkDelete = () => {
+    if (selectedFiles.length === 0) {
+      toast.error("삭제할 파일을 선택하세요.");
+      return;
+    }
+    startMutate(() => {
+      deleteFilesAction(selectedFiles.map((file) => file.path), currentFolder).then((result) => {
+        if (result.success && result.snapshot) {
+          handleSnapshotUpdate(result.snapshot);
+          toast.success(`${selectedFiles.length}개의 파일을 삭제했습니다.`);
+          clearSelection();
         } else if (!result.success) {
           toast.error(result.message);
           handleUnauthorized(result.message);
@@ -343,12 +428,29 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
     });
   };
 
-  const handleRefresh = (folder?: string) => {
+  const handleBulkDownload = () => {
+    if (selectedFiles.length === 0) {
+      toast.error("다운로드할 파일을 선택하세요.");
+      return;
+    }
+
+    startMutate(() => {
+      Promise.all(selectedFiles.map((file) => fetchDownloadUrl(file))).then((urls) => {
+        const opened = urls.filter(Boolean) as string[];
+        opened.forEach((url) => window.open(url, "_blank"));
+        if (opened.length > 0) {
+          toast.success(`${opened.length}개의 링크를 열었어요.`);
+        }
+      });
+    });
+  };
+
+  const handleRefresh = (folder?: string, showToast = true) => {
     startRefreshing(() => {
       refreshFiles(folder).then((result) => {
         if (result.success && result.snapshot) {
           handleSnapshotUpdate(result.snapshot, result.bucket);
-          toast.success("새로고침 완료");
+          if (showToast) toast.success("새로고침 완료");
         } else if (!result.success) {
           toast.error(result.message);
           handleUnauthorized(result.message);
@@ -421,19 +523,12 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
     });
   };
 
-  const totalFolders = folders.length;
+  const totalFolders = visibleFolders.length;
   const isRoot = !currentFolder;
   const currentLabel = currentFolder || "루트";
   const composePath = (folderName: string) =>
     (currentFolder ? `${currentFolder}/${folderName}` : folderName).replace(/\/+/, "/");
 
-  useEffect(() => {
-    const mediaQuery = window.matchMedia("(max-width: 640px)");
-    const updateMatches = () => setIsMobile(mediaQuery.matches);
-    updateMatches();
-    mediaQuery.addEventListener("change", updateMatches);
-    return () => mediaQuery.removeEventListener("change", updateMatches);
-  }, []);
 
   const breadcrumbItems = useMemo(() => {
     const segments = currentFolder ? currentFolder.split("/").filter(Boolean) : [];
@@ -449,7 +544,7 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
   return (
     <div className="flex min-h-screen flex-col gap-6 bg-gradient-to-br from-pink-50 via-rose-50 to-white px-4 py-6 sm:px-6">
       <div className="flex flex-col gap-4 lg:flex-row">
-        <aside className="flex w-full flex-col gap-4 rounded-3xl border border-pink-200/80 bg-white/90 p-4 shadow-lg lg:w-72">
+        <aside className="flex w-full flex-col gap-4 border border-pink-200/80 bg-white/90 p-4 shadow-lg lg:w-72">
           <div className="flex items-center justify-between">
             <div>
               <p className="text-xs uppercase tracking-[0.3em] text-rose-400">지현&정민 저장소</p>
@@ -464,13 +559,13 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
               variant={isRoot ? "default" : "ghost"}
               size="sm"
               className="w-full justify-start gap-2"
-              onClick={() => handleRefresh("")}
+              onClick={() => handleRefresh("", false)}
             >
               <FolderIcon className="size-4" /> 루트
             </Button>
             <div className="space-y-1">
               {totalFolders === 0 && <p className="text-xs text-muted-foreground">폴더를 만들어보세요.</p>}
-              {folders.map((folder) => {
+              {visibleFolders.map((folder) => {
                 const folderPath = composePath(folder);
                 const active = currentFolder === folderPath;
                 return (
@@ -482,7 +577,7 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
                       variant="ghost"
                       size="sm"
                       className="flex-1 justify-start gap-2"
-                      onClick={() => handleRefresh(folderPath)}
+                      onClick={() => handleRefresh(folderPath, false)}
                     >
                       <FolderIcon className="size-4" />
                       {folder}
@@ -504,7 +599,7 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
           </div>
           <form onSubmit={handleCreateFolder} className="mt-auto space-y-2">
             <Label className="text-xs text-muted-foreground">새 폴더</Label>
-            <div className="flex items-center gap-2 rounded-2xl border border-dashed border-pink-200 px-3 py-2">
+            <div className="flex items-center gap-2 border border-dashed border-pink-200 px-3 py-2">
               <FolderPlusIcon className="size-4 text-rose-400" />
               <Input
                 value={newFolder}
@@ -519,8 +614,24 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
           </form>
         </aside>
 
-        <main className="flex flex-1 flex-col gap-3">
-          <div className="rounded-2xl border border-pink-200/80 bg-white/95 p-3 shadow-md">
+        <main className="flex flex-1 flex-col gap-2.5">
+          {selectedCount > 0 && (
+            <div className="flex flex-wrap items-center justify-between border border-pink-200/80 bg-white/95 p-2.5 text-xs text-muted-foreground sm:text-sm">
+              <span>{selectedCount}개의 파일이 선택되었습니다.</span>
+              <div className="flex gap-2">
+                <Button size="sm" variant="secondary" onClick={handleBulkDownload}>
+                  다운로드
+                </Button>
+                <Button size="sm" variant="destructive" onClick={handleBulkDelete}>
+                  삭제
+                </Button>
+                <Button size="sm" variant="ghost" onClick={clearSelection}>
+                  해제
+                </Button>
+              </div>
+            </div>
+          )}
+          <div className="hidden border border-pink-200/80 bg-white/95 p-2.5 shadow-md sm:block">
             <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground sm:text-sm">
               <div className="flex flex-wrap items-center gap-2">
                 {breadcrumbItems.map((item, index) => {
@@ -529,11 +640,10 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
                     <div key={`${item.path || "root"}-${index}`} className="flex items-center gap-2">
                       <button
                         type="button"
-                        onClick={() => handleRefresh(item.path)}
-                        className={`rounded-full px-3 py-1 font-medium transition ${isLast
-                            ? "bg-rose-100 text-rose-500"
-                            : "text-muted-foreground hover:bg-rose-50 hover:text-rose-500"
-                          }`}
+                        onClick={() => handleRefresh(item.path, false)}
+                        className={`rounded-full px-3 py-1 font-medium transition ${
+                          isLast ? "bg-rose-100 text-rose-500" : "text-muted-foreground hover:bg-rose-50 hover:text-rose-500"
+                        }`}
                       >
                         {item.label}
                       </button>
@@ -555,17 +665,17 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
             </div>
           </div>
 
-          <div className="flex-1 rounded-2xl border border-pink-200/80 bg-white/95 p-3 shadow-md">
+          <div className="flex-1 border border-pink-200/80 bg-white/95 p-2.5 shadow-md">
             <div className="flex items-center justify-between">
               <div>
-                <h2 className="text-lg font-semibold">{currentLabel}</h2>
-                <p className="text-sm text-muted-foreground">파일 {files.length}개</p>
+                <h2 className="text-[15px] font-semibold sm:text-lg">{currentLabel}</h2>
+                <p className="text-[11px] text-muted-foreground sm:text-sm">파일 {files.length}개</p>
               </div>
               {!isRoot && (
                 <Button
                   size="sm"
                   variant="ghost"
-                  onClick={() => handleRefresh(currentFolder.split("/").slice(0, -1).join("/"))}
+                  onClick={() => handleRefresh(currentFolder.split("/").slice(0, -1).join("/"), false)}
                   className="gap-1"
                 >
                   <ArrowLeftIcon className="size-4" />
@@ -575,20 +685,28 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
             </div>
 
             {files.length === 0 ? (
-              <div className="mt-4 flex flex-1 flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-pink-200 px-5 py-10 text-center sm:min-h-[300px]">
+              <div className="mt-4 flex flex-1 flex-col items-center justify-center gap-3 border border-dashed border-pink-200 px-5 py-10 text-center sm:min-h-[300px]">
                 <FolderIcon className="size-8 text-rose-300" />
                 <p className="font-medium">비어 있어요. 파일을 업로드해 보세요.</p>
                 <p className="text-sm text-muted-foreground">새 폴더를 만들고 소중한 순간을 채워보세요.</p>
               </div>
             ) : (
-              <div className="mt-3 overflow-hidden rounded-2xl border border-pink-100">
+              <div className="mt-3 overflow-hidden border border-pink-100">
                 <Table>
                   <TableHeader>
                     <TableRow>
+                      <TableHead className="w-8">
+                        <input
+                          type="checkbox"
+                          aria-label="모두 선택"
+                          checked={allSelected}
+                          onChange={handleSelectAll}
+                          className="size-4 accent-rose-500"
+                        />
+                      </TableHead>
                       <TableHead>파일명</TableHead>
-                      <TableHead>크기</TableHead>
+                      <TableHead className="hidden sm:table-cell">크기</TableHead>
                       <TableHead>업데이트</TableHead>
-                      <TableHead className="text-right">작업</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -596,61 +714,45 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
                       <TableRow
                         key={file.id}
                         className="cursor-pointer"
-                        onDoubleClick={() => {
-                          if (!isMobile) setPreviewFile(file);
-                        }}
-                        onClick={() => {
-                          if (isMobile) setPreviewFile(file);
-                        }}
+                        onClick={() => setPreviewFile(file)}
                       >
+                        <TableCell className="w-8">
+                          <input
+                            type="checkbox"
+                            aria-label={`${file.name} 선택`}
+                            checked={selectedFileIds.has(file.id)}
+                            onChange={() => toggleFileSelection(file.id)}
+                            onClick={(event) => event.stopPropagation()}
+                            className="size-4 accent-rose-500"
+                          />
+                        </TableCell>
                         <TableCell>
                           <div className="flex items-center gap-3">
-                            <div className="h-8 w-6">
-                              <FileIcon
-                                extension={getExtension(file.name)}
-                                {...(defaultStyles[getExtension(file.name)] || defaultStyles.default)}
-                              />
+                            <div className="h-12 w-12 overflow-hidden border border-pink-100 bg-white">
+                              {isImageFile(file) ? (
+                                // eslint-disable-next-line @next/next/no-img-element
+                                <img
+                                  src={getPreviewUrl(file) ?? file.publicUrl}
+                                  alt={file.name}
+                                  loading="lazy"
+                                  className="h-full w-full object-cover"
+                                />
+                              ) : (
+                                <div className="flex h-full w-full items-center justify-center">
+                                  <FileIcon
+                                    extension={getExtension(file.name)}
+                                    {...(defaultStyles[getExtension(file.name)] || defaultStyles.default)}
+                                  />
+                                </div>
+                              )}
                             </div>
                             <div className="flex flex-col">
                               <span className="text-sm font-semibold text-foreground">{file.name}</span>
-                              <span className="text-xs text-muted-foreground">{file.contentType ?? "파일"}</span>
                             </div>
                           </div>
                         </TableCell>
-                        <TableCell>{formatSize(file.size)}</TableCell>
+                        <TableCell className="hidden sm:table-cell">{formatSize(file.size)}</TableCell>
                         <TableCell>{formatRelative(file.updatedAt)}</TableCell>
-                        <TableCell className="text-right">
-                          <DropdownMenu>
-                            <DropdownMenuTrigger className="inline-flex size-8 items-center justify-center rounded-full text-muted-foreground transition hover:bg-rose-100">
-                              <PlusIcon className="size-4" />
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end" className="w-48">
-                              <DropdownMenuItem onClick={() => handleGenerateLink(file.path, true)} className="gap-2">
-                                <LinkIcon className="size-4" /> 다운로드 링크 복사
-                              </DropdownMenuItem>
-                              <DropdownMenuItem
-                                onClick={() => {
-                                  navigator.clipboard.writeText(file.publicUrl).then(() => toast.success("링크 복사"));
-                                }}
-                                className="gap-2"
-                              >
-                                <CopyIcon className="size-4" /> 공개 URL 복사
-                              </DropdownMenuItem>
-                              <DropdownMenuItem
-                                onClick={() => {
-                                  setRenameTarget(file);
-                                  setRenameValue(file.name);
-                                }}
-                                className="gap-2"
-                              >
-                                <FolderPlusIcon className="size-4" /> 이름 변경
-                              </DropdownMenuItem>
-                              <DropdownMenuItem onClick={() => handleDelete(file.path)} className="gap-2 text-destructive">
-                                <Trash2Icon className="size-4" /> 삭제
-                              </DropdownMenuItem>
-                            </DropdownMenuContent>
-                          </DropdownMenu>
-                        </TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
@@ -659,7 +761,7 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
             )}
           </div>
 
-          <div className="hidden rounded-2xl border border-pink-200/80 bg-white/95 p-3 shadow-md sm:block">
+          <div className="hidden border border-pink-200/80 bg-white/95 p-2.5 shadow-md sm:block">
             <div className="flex items-center justify-between">
               <div>
                 <h2 className="text-lg font-semibold">파일 · 폴더 업로드</h2>
@@ -668,10 +770,10 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
               <UploadCloudIcon className="size-5 text-rose-400" />
             </div>
             <div className="mt-3 grid gap-3 lg:grid-cols-2">
-              <form className="space-y-3 rounded-2xl border border-pink-100 p-3" onSubmit={handleFileUploadSubmit}>
+              <form className="space-y-3 border border-pink-100 p-3" onSubmit={handleFileUploadSubmit}>
                 <input type="hidden" name="folder" value={currentFolder} />
                 <div
-                  className={`rounded-2xl border-2 border-dashed p-5 text-center transition ${fileDropActive ? "border-rose-400 bg-rose-50" : "border-pink-200"}`}
+                  className={`border-2 border-dashed p-5 text-center transition ${fileDropActive ? "border-rose-400 bg-rose-50" : "border-pink-200"}`}
                   onDragOver={(event) => handleDragOver(event, "file")}
                   onDragLeave={(event) => handleDragLeave(event, "file")}
                   onDrop={(event) => handleDrop(event, "file")}
@@ -697,10 +799,10 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
                 </Button>
               </form>
 
-              <form className="space-y-3 rounded-2xl border border-pink-100 p-3" onSubmit={handleFolderUploadSubmit}>
+              <form className="space-y-3 border border-pink-100 p-3" onSubmit={handleFolderUploadSubmit}>
                 <input type="hidden" name="folder" value={currentFolder} />
                 <div
-                  className={`rounded-2xl border-2 border-dashed p-5 text-center transition ${folderDropActive ? "border-rose-400 bg-rose-50" : "border-pink-200"}`}
+                  className={`border-2 border-dashed p-5 text-center transition ${folderDropActive ? "border-rose-400 bg-rose-50" : "border-pink-200"}`}
                   onDragOver={(event) => handleDragOver(event, "folder")}
                   onDragLeave={(event) => handleDragLeave(event, "folder")}
                   onDrop={(event) => handleDrop(event, "folder")}
@@ -747,8 +849,8 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
         </main>
       </div>
 
-      <div className="fixed bottom-3 left-1/2 z-20 w-full max-w-md -translate-x-1/2 px-4 sm:hidden">
-        <div className="rounded-2xl border border-pink-200/70 bg-white/95 px-3 py-3 shadow-md">
+      <div className="fixed bottom-3 left-1/2 z-20 w-full max-w-md -translate-x-1/2 px-3 sm:hidden">
+        <div className="border border-pink-200/70 bg-white/95 px-3 py-2.5 shadow-md">
           <div className="flex items-center justify-between text-xs font-semibold text-muted-foreground">
             <span>빠른 업로드</span>
             <span>{currentLabel || "루트"}</span>
@@ -776,28 +878,62 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
       </div>
 
       <Dialog open={Boolean(previewFile)} onOpenChange={(open) => (!open ? setPreviewFile(null) : null)}>
-        <DialogContent className="max-w-xl">
-          <DialogHeader>
-            <DialogTitle>{previewFile?.name}</DialogTitle>
-            <DialogDescription>{previewFile ? formatSize(previewFile.size) : ""}</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-3 rounded-2xl border border-dashed border-pink-200 p-4 text-sm">
-            <p className="text-muted-foreground">다운로드 링크를 새 탭에서 열거나 복사해 주세요.</p>
-            <div className="flex gap-2">
-              <Button
-                size="sm"
-                onClick={() => previewFile && handleGenerateLink(previewFile.path, false)}
-              >
-                다운로드 열기
-              </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => previewFile && handleGenerateLink(previewFile.path, true)}
-              >
-                링크 복사
-              </Button>
+        <DialogContent className="max-w-md sm:max-w-lg">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <DialogTitle>{previewFile?.name}</DialogTitle>
+              <DialogDescription>
+                {previewFile ? `${formatSize(previewFile.size)} · ${previewFile.contentType ?? "파일"}` : ""}
+              </DialogDescription>
             </div>
+            {previewFile && (
+              <div className="flex gap-2">
+                <Button size="sm" variant="secondary" onClick={() => handleGenerateLink(previewFile)}>
+                  다운로드
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => handleGenerateLink(previewFile, true)}>
+                  링크 복사
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    setRenameTarget(previewFile);
+                    setRenameValue(previewFile.name);
+                  }}
+                >
+                  이름 변경
+                </Button>
+              </div>
+            )}
+          </div>
+          <div className="mt-4 min-h-[240px] border border-dashed border-pink-200 bg-white p-3">
+            {previewFile ? (
+              isImageFile(previewFile) ? (
+                getPreviewUrl(previewFile) ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={getPreviewUrl(previewFile) ?? undefined}
+                    alt={previewFile.name}
+                    className="mx-auto max-h-[360px] w-full object-contain"
+                  />
+                ) : (
+                  <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+                    이미지 링크를 불러오는 중...
+                  </div>
+                )
+              ) : (
+                <div className="flex h-full flex-col items-center justify-center gap-3 text-center text-sm text-muted-foreground">
+                  <div className="h-12 w-12">
+                    <FileIcon
+                      extension={getExtension(previewFile.name)}
+                      {...(defaultStyles[getExtension(previewFile.name)] || defaultStyles.default)}
+                    />
+                  </div>
+                  <p>이 파일은 미리보기를 지원하지 않아요.</p>
+                </div>
+              )
+            ) : null}
           </div>
         </DialogContent>
       </Dialog>
@@ -847,4 +983,10 @@ function deriveRelativeFolder(root: string, relativePath?: string) {
   segments.pop();
   const relative = segments.join("/");
   return root ? `${root}/${relative}` : relative;
+}
+
+function isImageFile(file: StorageFile) {
+  if (file.contentType?.startsWith("image/")) return true;
+  const imageExtensions = ["jpg", "jpeg", "png", "gif", "webp", "bmp", "svg", "avif", "heic"];
+  return imageExtensions.includes(getExtension(file.name));
 }
