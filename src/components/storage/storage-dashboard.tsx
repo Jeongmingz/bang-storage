@@ -10,7 +10,6 @@ import {
 } from "react";
 import { useRouter } from "next/navigation";
 import {
-  ArrowLeftIcon,
   FolderIcon,
   FolderPlusIcon,
   LogOutIcon,
@@ -360,7 +359,7 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
   };
 
   useEffect(() => {
-    if (previewFile && isImageFile(previewFile)) {
+    if (previewFile && getPreviewType(previewFile)) {
       fetchDownloadUrl(previewFile);
     }
   }, [previewFile, fetchDownloadUrl]);
@@ -370,7 +369,7 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
   }, [currentFolder]);
 
   useEffect(() => {
-    const missing = files.filter((file) => isImageFile(file) && !getCachedUrl(file));
+    const missing = files.filter((file) => getPreviewType(file) && !getCachedUrl(file));
     if (missing.length === 0) return;
     missing.forEach((file) => {
       fetchDownloadUrl(file);
@@ -378,13 +377,15 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
   }, [files, getCachedUrl, fetchDownloadUrl]);
 
   const getPreviewUrl = (file: StorageFile) => {
-    if (!isImageFile(file)) return null;
+    if (!getPreviewType(file)) return null;
     return getCachedUrl(file);
   };
 
   const selectedFiles = useMemo(() => files.filter((file) => selectedFileIds.has(file.id)), [files, selectedFileIds]);
   const selectedCount = selectedFiles.length;
   const allSelected = files.length > 0 && selectedCount === files.length;
+  const previewKind = previewFile ? getPreviewType(previewFile) : null;
+  const previewLink = previewFile && previewKind ? getPreviewUrl(previewFile) : null;
 
   const toggleFileSelection = (fileId: string) => {
     setSelectedFileIds((prev) => {
@@ -543,26 +544,97 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
 
   return (
     <div className="flex min-h-screen flex-col gap-6 bg-gradient-to-br from-pink-50 via-rose-50 to-white px-4 py-6 sm:px-6">
-      <div className="flex flex-col gap-4 lg:flex-row">
-        <aside className="flex w-full flex-col gap-4 border border-pink-200/80 bg-white/90 p-4 shadow-lg lg:w-72">
-          <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-4">
+        <section className="border border-pink-200/80 bg-white/95 p-4 shadow-md">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div>
               <p className="text-xs uppercase tracking-[0.3em] text-rose-400">지현&정민 저장소</p>
               <p className="text-base font-semibold text-foreground">{bucket}</p>
             </div>
-            <Button variant="ghost" size="icon" onClick={handleLogout}>
-              <LogOutIcon className="size-4" />
-            </Button>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                onClick={() => handleRefresh(currentFolder)}
+                disabled={isRefreshing}
+                aria-label="새로고침"
+              >
+                <RefreshCcwIcon className="size-4" />
+              </Button>
+              <Button variant="ghost" size="icon" onClick={handleLogout} aria-label="로그아웃">
+                <LogOutIcon className="size-4" />
+              </Button>
+            </div>
           </div>
-          <div className="space-y-1">
-            <Button
-              variant={isRoot ? "default" : "ghost"}
-              size="sm"
-              className="w-full justify-start gap-2"
-              onClick={() => handleRefresh("", false)}
-            >
-              <FolderIcon className="size-4" /> 루트
-            </Button>
+          <div className="mt-4 flex flex-wrap items-center gap-2 text-xs text-muted-foreground sm:text-sm">
+            {breadcrumbItems.map((item, index) => {
+              const isLast = index === breadcrumbItems.length - 1;
+              return (
+                <div key={`${item.path || "root"}-${index}`} className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => handleRefresh(item.path, false)}
+                    className={`rounded-full px-3 py-1 font-medium transition ${
+                      isLast ? "bg-rose-100 text-rose-500" : "text-muted-foreground hover:bg-rose-50 hover:text-rose-500"
+                    }`}
+                  >
+                    {item.label}
+                  </button>
+                  {index < breadcrumbItems.length - 1 && <span className="text-rose-200">/</span>}
+                </div>
+              );
+            })}
+          </div>
+          {selectedCount > 0 && (
+            <div className="mt-4 flex flex-wrap items-center justify-between rounded-2xl border border-pink-200/80 bg-rose-50/80 p-2.5 text-xs text-muted-foreground sm:text-sm">
+              <span>{selectedCount}개의 파일이 선택되었습니다.</span>
+              <div className="flex gap-2">
+                <Button size="sm" variant="secondary" onClick={handleBulkDownload}>
+                  다운로드
+                </Button>
+                <Button size="sm" variant="destructive" onClick={handleBulkDelete}>
+                  삭제
+                </Button>
+                <Button size="sm" variant="ghost" onClick={clearSelection}>
+                  해제
+                </Button>
+              </div>
+            </div>
+          )}
+        </section>
+
+        <section className="border border-pink-200/80 bg-white/95 p-4 shadow-md">
+          <div className="flex flex-col gap-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h2 className="text-sm font-semibold text-foreground sm:text-base">폴더 탐색</h2>
+                <p className="text-xs text-muted-foreground">{currentLabel || "루트"} 기준으로 이동해요.</p>
+              </div>
+              <Button
+                variant={isRoot ? "default" : "ghost"}
+                size="sm"
+                className="gap-2"
+                onClick={() => handleRefresh("", false)}
+              >
+                <FolderIcon className="size-4" /> 루트
+              </Button>
+            </div>
+            <form onSubmit={handleCreateFolder} className="space-y-2">
+              <Label className="text-xs text-muted-foreground">새 폴더</Label>
+              <div className="flex items-center gap-2 rounded-2xl border border-dashed border-pink-200 px-3 py-2">
+                <FolderPlusIcon className="size-4 text-rose-400" />
+                <Input
+                  value={newFolder}
+                  onChange={(event) => setNewFolder(event.target.value)}
+                  placeholder="예: photos"
+                  className="border-none px-0 text-sm focus-visible:ring-0"
+                />
+                <Button type="submit" size="sm" disabled={isMutating}>
+                  만들기
+                </Button>
+              </div>
+            </form>
             <div className="space-y-1">
               {totalFolders === 0 && <p className="text-xs text-muted-foreground">폴더를 만들어보세요.</p>}
               {visibleFolders.map((folder) => {
@@ -597,91 +669,15 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
               })}
             </div>
           </div>
-          <form onSubmit={handleCreateFolder} className="mt-auto space-y-2">
-            <Label className="text-xs text-muted-foreground">새 폴더</Label>
-            <div className="flex items-center gap-2 border border-dashed border-pink-200 px-3 py-2">
-              <FolderPlusIcon className="size-4 text-rose-400" />
-              <Input
-                value={newFolder}
-                onChange={(event) => setNewFolder(event.target.value)}
-                placeholder="예: photos"
-                className="border-none px-0 text-sm focus-visible:ring-0"
-              />
-              <Button type="submit" size="sm" disabled={isMutating}>
-                만들기
-              </Button>
-            </div>
-          </form>
-        </aside>
+        </section>
 
-        <main className="flex flex-1 flex-col gap-2.5">
-          {selectedCount > 0 && (
-            <div className="flex flex-wrap items-center justify-between border border-pink-200/80 bg-white/95 p-2.5 text-xs text-muted-foreground sm:text-sm">
-              <span>{selectedCount}개의 파일이 선택되었습니다.</span>
-              <div className="flex gap-2">
-                <Button size="sm" variant="secondary" onClick={handleBulkDownload}>
-                  다운로드
-                </Button>
-                <Button size="sm" variant="destructive" onClick={handleBulkDelete}>
-                  삭제
-                </Button>
-                <Button size="sm" variant="ghost" onClick={clearSelection}>
-                  해제
-                </Button>
-              </div>
-            </div>
-          )}
-          <div className="hidden border border-pink-200/80 bg-white/95 p-2.5 shadow-md sm:block">
-            <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground sm:text-sm">
-              <div className="flex flex-wrap items-center gap-2">
-                {breadcrumbItems.map((item, index) => {
-                  const isLast = index === breadcrumbItems.length - 1;
-                  return (
-                    <div key={`${item.path || "root"}-${index}`} className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => handleRefresh(item.path, false)}
-                        className={`rounded-full px-3 py-1 font-medium transition ${
-                          isLast ? "bg-rose-100 text-rose-500" : "text-muted-foreground hover:bg-rose-50 hover:text-rose-500"
-                        }`}
-                      >
-                        {item.label}
-                      </button>
-                      {index < breadcrumbItems.length - 1 && <span className="text-rose-200">/</span>}
-                    </div>
-                  );
-                })}
-              </div>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="ml-auto"
-                onClick={() => handleRefresh(currentFolder)}
-                disabled={isRefreshing}
-              >
-                <RefreshCcwIcon className="size-4" />
-              </Button>
-            </div>
-          </div>
-
+        <section className="flex flex-col gap-2.5">
           <div className="flex-1 border border-pink-200/80 bg-white/95 p-2.5 shadow-md">
             <div className="flex items-center justify-between">
               <div>
                 <h2 className="text-[15px] font-semibold sm:text-lg">{currentLabel}</h2>
                 <p className="text-[11px] text-muted-foreground sm:text-sm">파일 {files.length}개</p>
               </div>
-              {!isRoot && (
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => handleRefresh(currentFolder.split("/").slice(0, -1).join("/"), false)}
-                  className="gap-1"
-                >
-                  <ArrowLeftIcon className="size-4" />
-                  위로 가기
-                </Button>
-              )}
             </div>
 
             {files.length === 0 ? (
@@ -710,51 +706,68 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {files.map((file) => (
-                      <TableRow
-                        key={file.id}
-                        className="cursor-pointer"
-                        onClick={() => setPreviewFile(file)}
-                      >
-                        <TableCell className="w-8">
-                          <input
-                            type="checkbox"
-                            aria-label={`${file.name} 선택`}
-                            checked={selectedFileIds.has(file.id)}
-                            onChange={() => toggleFileSelection(file.id)}
-                            onClick={(event) => event.stopPropagation()}
-                            className="size-4 accent-rose-500"
-                          />
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex items-center gap-3">
-                            <div className="h-12 w-12 overflow-hidden border border-pink-100 bg-white">
-                              {isImageFile(file) ? (
-                                // eslint-disable-next-line @next/next/no-img-element
-                                <img
-                                  src={getPreviewUrl(file) ?? file.publicUrl}
-                                  alt={file.name}
-                                  loading="lazy"
-                                  className="h-full w-full object-cover"
-                                />
-                              ) : (
-                                <div className="flex h-full w-full items-center justify-center">
-                                  <FileIcon
-                                    extension={getExtension(file.name)}
-                                    {...(defaultStyles[getExtension(file.name)] || defaultStyles.default)}
+                    {files.map((file) => {
+                      const previewType = getPreviewType(file);
+                      const previewUrl = previewType ? getPreviewUrl(file) : null;
+                      return (
+                        <TableRow
+                          key={file.id}
+                          className="cursor-pointer"
+                          onClick={() => setPreviewFile(file)}
+                        >
+                          <TableCell className="w-8">
+                            <input
+                              type="checkbox"
+                              aria-label={`${file.name} 선택`}
+                              checked={selectedFileIds.has(file.id)}
+                              onChange={() => toggleFileSelection(file.id)}
+                              onClick={(event) => event.stopPropagation()}
+                              className="size-4 accent-rose-500"
+                            />
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex items-center gap-3">
+                              <div className="h-12 w-12 overflow-hidden border border-pink-100 bg-white">
+                                {previewType === "image" && previewUrl ? (
+                                  // eslint-disable-next-line @next/next/no-img-element
+                                  <img
+                                    src={previewUrl ?? undefined}
+                                    alt={file.name}
+                                    loading="lazy"
+                                    className="h-full w-full object-cover"
                                   />
-                                </div>
-                              )}
+                                ) : previewType === "video" && previewUrl ? (
+                                  <video
+                                    src={previewUrl}
+                                    className="h-full w-full object-cover"
+                                    muted
+                                    playsInline
+                                    loop
+                                    preload="metadata"
+                                  />
+                                ) : previewType ? (
+                                  <div className="flex h-full w-full items-center justify-center text-[10px] text-muted-foreground">
+                                    로딩 중...
+                                  </div>
+                                ) : (
+                                  <div className="flex h-full w-full items-center justify-center">
+                                    <FileIcon
+                                      extension={getExtension(file.name)}
+                                      {...(defaultStyles[getExtension(file.name)] || defaultStyles.default)}
+                                    />
+                                  </div>
+                                )}
+                              </div>
+                              <div className="flex flex-col">
+                                <span className="text-sm font-semibold text-foreground">{file.name}</span>
+                              </div>
                             </div>
-                            <div className="flex flex-col">
-                              <span className="text-sm font-semibold text-foreground">{file.name}</span>
-                            </div>
-                          </div>
-                        </TableCell>
-                        <TableCell className="hidden sm:table-cell">{formatSize(file.size)}</TableCell>
-                        <TableCell>{formatRelative(file.updatedAt)}</TableCell>
-                      </TableRow>
-                    ))}
+                          </TableCell>
+                          <TableCell className="hidden sm:table-cell">{formatSize(file.size)}</TableCell>
+                          <TableCell>{formatRelative(file.updatedAt)}</TableCell>
+                        </TableRow>
+                      );
+                    })}
                   </TableBody>
                 </Table>
               </div>
@@ -846,7 +859,7 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
               </div>
             )}
           </div>
-        </main>
+        </section>
       </div>
 
       <div className="fixed bottom-3 left-1/2 z-20 w-full max-w-md -translate-x-1/2 px-3 sm:hidden">
@@ -909,17 +922,30 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
           </div>
           <div className="mt-4 min-h-[240px] border border-dashed border-pink-200 bg-white p-3">
             {previewFile ? (
-              isImageFile(previewFile) ? (
-                getPreviewUrl(previewFile) ? (
+              previewKind === "image" ? (
+                previewLink ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img
-                    src={getPreviewUrl(previewFile) ?? undefined}
+                    src={previewLink}
                     alt={previewFile.name}
                     className="mx-auto max-h-[360px] w-full object-contain"
                   />
                 ) : (
                   <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
                     이미지 링크를 불러오는 중...
+                  </div>
+                )
+              ) : previewKind === "video" ? (
+                previewLink ? (
+                  <video
+                    src={previewLink}
+                    controls
+                    className="mx-auto max-h-[360px] w-full object-contain"
+                    playsInline
+                  />
+                ) : (
+                  <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+                    영상 링크를 불러오는 중...
                   </div>
                 )
               ) : (
@@ -985,8 +1011,29 @@ function deriveRelativeFolder(root: string, relativePath?: string) {
   return root ? `${root}/${relative}` : relative;
 }
 
-function isImageFile(file: StorageFile) {
-  if (file.contentType?.startsWith("image/")) return true;
-  const imageExtensions = ["jpg", "jpeg", "png", "gif", "webp", "bmp", "svg", "avif", "heic"];
-  return imageExtensions.includes(getExtension(file.name));
+type PreviewKind = "image" | "video";
+
+const IMAGE_PREVIEW_EXTENSIONS = [
+  "jpg",
+  "jpeg",
+  "png",
+  "gif",
+  "webp",
+  "bmp",
+  "svg",
+  "avif",
+  "heic",
+  "heif",
+  "tif",
+  "tiff",
+];
+const VIDEO_PREVIEW_EXTENSIONS = ["mp4", "m4v", "mov", "webm", "mkv", "avi", "wmv", "flv", "3gp"];
+
+function getPreviewType(file: StorageFile): PreviewKind | null {
+  if (file.contentType?.startsWith("image/")) return "image";
+  if (file.contentType?.startsWith("video/")) return "video";
+  const extension = getExtension(file.name);
+  if (IMAGE_PREVIEW_EXTENSIONS.includes(extension)) return "image";
+  if (VIDEO_PREVIEW_EXTENSIONS.includes(extension)) return "video";
+  return null;
 }
