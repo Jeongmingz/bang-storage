@@ -65,7 +65,7 @@ type Props = {
 
 type RelativeFile = File & { webkitRelativePath?: string };
 type TableItem =
-  | { kind: "folder"; id: string; name: string; path: string }
+  | { kind: "folder"; id: string; name: string; path: string; isParent?: boolean }
   | { kind: "file"; id: string; file: StorageFile };
 
 function formatSize(size: number) {
@@ -533,8 +533,17 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
   const currentLabel = currentFolder || "루트";
   const composePath = (folderName: string) =>
     (currentFolder ? `${currentFolder}/${folderName}` : folderName).replace(/\/+/, "/");
+  const parentPath = useMemo(() => {
+    if (!currentFolder) return "";
+    const segments = currentFolder.split("/").filter(Boolean);
+    segments.pop();
+    return segments.join("/");
+  }, [currentFolder]);
 
   const tableItems = useMemo<TableItem[]>(() => {
+    const parentItem = !isRoot
+      ? [{ kind: "folder" as const, id: "folder-parent", name: "..", path: parentPath, isParent: true }]
+      : [];
     const folderItems = visibleFolders.map((folder) => ({
       kind: "folder" as const,
       id: `folder-${folder}`,
@@ -546,8 +555,8 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
       id: file.id,
       file,
     }));
-    return [...folderItems, ...fileItems];
-  }, [visibleFolders, files, currentFolder]);
+    return [...parentItem, ...folderItems, ...fileItems];
+  }, [visibleFolders, files, currentFolder, isRoot, parentPath]);
 
   const breadcrumbItems = useMemo(() => {
     const segments = currentFolder ? currentFolder.split("/").filter(Boolean) : [];
@@ -700,27 +709,34 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
                                     }`}>
                                       <FolderIcon className="size-5 text-rose-400" />
                                     </div>
-                                    <span className="text-sm font-semibold text-foreground">{item.name}</span>
+                                    <div className="flex flex-col">
+                                      <span className="text-sm font-semibold text-foreground">{item.name}</span>
+                                      {item.isParent && (
+                                        <span className="text-xs text-muted-foreground">상위 폴더로 이동</span>
+                                      )}
+                                    </div>
                                   </div>
-                                  <DropdownMenu>
-                                    <DropdownMenuTrigger
-                                      className="inline-flex size-8 items-center justify-center rounded-full text-muted-foreground transition hover:bg-rose-100"
-                                      onClick={(event) => event.stopPropagation()}
-                                    >
-                                      <MoreHorizontalIcon className="size-4" />
-                                    </DropdownMenuTrigger>
-                                    <DropdownMenuContent align="end">
-                                      <DropdownMenuItem
-                                        className="text-destructive"
-                                        onClick={(event) => {
-                                          event.stopPropagation();
-                                          handleDeleteFolder(item.path);
-                                        }}
+                                  {!item.isParent && (
+                                    <DropdownMenu>
+                                      <DropdownMenuTrigger
+                                        className="inline-flex size-8 items-center justify-center rounded-full text-muted-foreground transition hover:bg-rose-100"
+                                        onClick={(event) => event.stopPropagation()}
                                       >
-                                        <Trash2Icon className="mr-2 size-4" /> 삭제
-                                      </DropdownMenuItem>
-                                    </DropdownMenuContent>
-                                  </DropdownMenu>
+                                        <MoreHorizontalIcon className="size-4" />
+                                      </DropdownMenuTrigger>
+                                      <DropdownMenuContent align="end">
+                                        <DropdownMenuItem
+                                          className="text-destructive"
+                                          onClick={(event) => {
+                                            event.stopPropagation();
+                                            handleDeleteFolder(item.path);
+                                          }}
+                                        >
+                                          <Trash2Icon className="mr-2 size-4" /> 삭제
+                                        </DropdownMenuItem>
+                                      </DropdownMenuContent>
+                                    </DropdownMenu>
+                                  )}
                                 </div>
                               </TableCell>
                               <TableCell className="hidden sm:table-cell text-xs text-muted-foreground">폴더</TableCell>
