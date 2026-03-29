@@ -64,6 +64,9 @@ type Props = {
 };
 
 type RelativeFile = File & { webkitRelativePath?: string };
+type TableItem =
+  | { kind: "folder"; id: string; name: string; path: string }
+  | { kind: "file"; id: string; file: StorageFile };
 
 function formatSize(size: number) {
   if (size === 0) return "0 B";
@@ -102,6 +105,7 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
   const [fileSelection, setFileSelection] = useState<string[]>([]);
   const [folderSelection, setFolderSelection] = useState<string[]>([]);
   const [newFolder, setNewFolder] = useState("");
+  const [isFolderDialogOpen, setIsFolderDialogOpen] = useState(false);
   const [previewFile, setPreviewFile] = useState<StorageFile | null>(null);
   const [renameTarget, setRenameTarget] = useState<StorageFile | null>(null);
   const [renameValue, setRenameValue] = useState("");
@@ -484,6 +488,7 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
           handleSnapshotUpdate(result.snapshot);
           toast.success("폴더를 만들었어요.");
           setNewFolder("");
+          setIsFolderDialogOpen(false);
         } else if (!result.success) {
           toast.error(result.message);
           handleUnauthorized(result.message);
@@ -524,12 +529,25 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
     });
   };
 
-  const totalFolders = visibleFolders.length;
   const isRoot = !currentFolder;
   const currentLabel = currentFolder || "루트";
   const composePath = (folderName: string) =>
     (currentFolder ? `${currentFolder}/${folderName}` : folderName).replace(/\/+/, "/");
 
+  const tableItems = useMemo<TableItem[]>(() => {
+    const folderItems = visibleFolders.map((folder) => ({
+      kind: "folder" as const,
+      id: `folder-${folder}`,
+      name: folder,
+      path: composePath(folder),
+    }));
+    const fileItems = files.map((file) => ({
+      kind: "file" as const,
+      id: file.id,
+      file,
+    }));
+    return [...folderItems, ...fileItems];
+  }, [visibleFolders, files, currentFolder]);
 
   const breadcrumbItems = useMemo(() => {
     const segments = currentFolder ? currentFolder.split("/").filter(Boolean) : [];
@@ -605,260 +623,265 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
         </section>
 
         <section className="border border-pink-200/80 bg-white/95 p-4 shadow-md">
-          <div className="flex flex-col gap-3">
+          <div className="space-y-4">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
                 <h2 className="text-sm font-semibold text-foreground sm:text-base">폴더 탐색</h2>
                 <p className="text-xs text-muted-foreground">{currentLabel || "루트"} 기준으로 이동해요.</p>
               </div>
-              <Button
-                variant={isRoot ? "default" : "ghost"}
-                size="sm"
-                className="gap-2"
-                onClick={() => handleRefresh("", false)}
-              >
-                <FolderIcon className="size-4" /> 루트
-              </Button>
-            </div>
-            <form onSubmit={handleCreateFolder} className="space-y-2">
-              <Label className="text-xs text-muted-foreground">새 폴더</Label>
-              <div className="flex items-center gap-2 rounded-2xl border border-dashed border-pink-200 px-3 py-2">
-                <FolderPlusIcon className="size-4 text-rose-400" />
-                <Input
-                  value={newFolder}
-                  onChange={(event) => setNewFolder(event.target.value)}
-                  placeholder="예: photos"
-                  className="border-none px-0 text-sm focus-visible:ring-0"
-                />
-                <Button type="submit" size="sm" disabled={isMutating}>
-                  만들기
+              <div className="flex items-center gap-2">
+                <Button
+                  variant={isRoot ? "default" : "ghost"}
+                  size="sm"
+                  className="gap-2"
+                  onClick={() => handleRefresh("", false)}
+                >
+                  <FolderIcon className="size-4" /> 루트
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  className="gap-2"
+                  onClick={() => setIsFolderDialogOpen(true)}
+                >
+                  <FolderPlusIcon className="size-4" /> 새 폴더
                 </Button>
               </div>
-            </form>
-            <div className="space-y-1">
-              {totalFolders === 0 && <p className="text-xs text-muted-foreground">폴더를 만들어보세요.</p>}
-              {visibleFolders.map((folder) => {
-                const folderPath = composePath(folder);
-                const active = currentFolder === folderPath;
-                return (
-                  <div
-                    key={folderPath}
-                    className={`group flex items-center justify-between rounded-2xl px-2 py-1.5 ${active ? "bg-pink-100" : "bg-transparent"}`}
-                  >
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="flex-1 justify-start gap-2"
-                      onClick={() => handleRefresh(folderPath, false)}
-                    >
-                      <FolderIcon className="size-4" />
-                      {folder}
-                    </Button>
-                    <DropdownMenu>
-                      <DropdownMenuTrigger className="inline-flex size-8 items-center justify-center rounded-full text-muted-foreground transition hover:bg-rose-100">
-                        <MoreHorizontalIcon className="size-4" />
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        <DropdownMenuItem className="text-destructive" onClick={() => handleDeleteFolder(folderPath)}>
-                          <Trash2Icon className="mr-2 size-4" /> 삭제
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </div>
-                );
-              })}
+            </div>
+            <div className="rounded-2xl border border-pink-200/80 p-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-[15px] font-semibold sm:text-lg">{currentLabel}</h2>
+                  <p className="text-[11px] text-muted-foreground sm:text-sm">파일 {files.length}개</p>
+                </div>
+              </div>
+
+              {tableItems.length === 0 ? (
+                <div className="mt-4 flex flex-1 flex-col items-center justify-center gap-3 border border-dashed border-pink-200 px-5 py-10 text-center sm:min-h-[300px]">
+                  <FolderIcon className="size-8 text-rose-300" />
+                  <p className="font-medium">비어 있어요. 파일을 업로드해 보세요.</p>
+                  <p className="text-sm text-muted-foreground">새 폴더를 만들고 소중한 순간을 채워보세요.</p>
+                </div>
+              ) : (
+                <div className="mt-3 overflow-hidden border border-pink-100">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="w-8">
+                          <input
+                            type="checkbox"
+                            aria-label="모두 선택"
+                            checked={allSelected}
+                            onChange={handleSelectAll}
+                            className="size-4 accent-rose-500"
+                          />
+                        </TableHead>
+                        <TableHead>파일명</TableHead>
+                        <TableHead className="hidden sm:table-cell">크기</TableHead>
+                        <TableHead>업데이트</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {tableItems.map((item) => {
+                        if (item.kind === "folder") {
+                          const active = currentFolder === item.path;
+                          return (
+                            <TableRow
+                              key={item.id}
+                              className="cursor-pointer"
+                              onClick={() => handleRefresh(item.path, false)}
+                            >
+                              <TableCell className="w-8 text-center text-[11px] text-muted-foreground">—</TableCell>
+                              <TableCell>
+                                <div className="flex items-center justify-between gap-2">
+                                  <div className="flex items-center gap-3">
+                                    <div className={`flex h-12 w-12 items-center justify-center border ${
+                                      active ? "border-rose-300 bg-rose-50" : "border-pink-100 bg-white"
+                                    }`}>
+                                      <FolderIcon className="size-5 text-rose-400" />
+                                    </div>
+                                    <span className="text-sm font-semibold text-foreground">{item.name}</span>
+                                  </div>
+                                  <DropdownMenu>
+                                    <DropdownMenuTrigger
+                                      className="inline-flex size-8 items-center justify-center rounded-full text-muted-foreground transition hover:bg-rose-100"
+                                      onClick={(event) => event.stopPropagation()}
+                                    >
+                                      <MoreHorizontalIcon className="size-4" />
+                                    </DropdownMenuTrigger>
+                                    <DropdownMenuContent align="end">
+                                      <DropdownMenuItem
+                                        className="text-destructive"
+                                        onClick={(event) => {
+                                          event.stopPropagation();
+                                          handleDeleteFolder(item.path);
+                                        }}
+                                      >
+                                        <Trash2Icon className="mr-2 size-4" /> 삭제
+                                      </DropdownMenuItem>
+                                    </DropdownMenuContent>
+                                  </DropdownMenu>
+                                </div>
+                              </TableCell>
+                              <TableCell className="hidden sm:table-cell text-xs text-muted-foreground">폴더</TableCell>
+                              <TableCell className="text-xs text-muted-foreground">—</TableCell>
+                            </TableRow>
+                          );
+                        }
+                        const file = item.file;
+                        const previewType = getPreviewType(file);
+                        const previewUrl = previewType ? getPreviewUrl(file) : null;
+                        return (
+                          <TableRow
+                            key={file.id}
+                            className="cursor-pointer"
+                            onClick={() => setPreviewFile(file)}
+                          >
+                            <TableCell className="w-8">
+                              <input
+                                type="checkbox"
+                                aria-label={`${file.name} 선택`}
+                                checked={selectedFileIds.has(file.id)}
+                                onChange={() => toggleFileSelection(file.id)}
+                                onClick={(event) => event.stopPropagation()}
+                                className="size-4 accent-rose-500"
+                              />
+                            </TableCell>
+                            <TableCell>
+                              <div className="flex items-center gap-3">
+                                <div className="h-12 w-12 overflow-hidden border border-pink-100 bg-white">
+                                  {previewType === "image" && previewUrl ? (
+                                    // eslint-disable-next-line @next/next/no-img-element
+                                    <img
+                                      src={previewUrl ?? undefined}
+                                      alt={file.name}
+                                      loading="lazy"
+                                      className="h-full w-full object-cover"
+                                    />
+                                  ) : previewType === "video" && previewUrl ? (
+                                    <video
+                                      src={previewUrl}
+                                      className="h-full w-full object-cover"
+                                      muted
+                                      playsInline
+                                      loop
+                                      preload="metadata"
+                                    />
+                                  ) : previewType ? (
+                                    <div className="flex h-full w-full items-center justify-center text-[10px] text-muted-foreground">
+                                      로딩 중...
+                                    </div>
+                                  ) : (
+                                    <div className="flex h-full w-full items-center justify-center">
+                                      <FileIcon
+                                        extension={getExtension(file.name)}
+                                        {...(defaultStyles[getExtension(file.name)] || defaultStyles.default)}
+                                      />
+                                    </div>
+                                  )}
+                                </div>
+                                <div className="flex flex-col">
+                                  <span className="text-sm font-semibold text-foreground">{file.name}</span>
+                                </div>
+                              </div>
+                            </TableCell>
+                            <TableCell className="hidden sm:table-cell">{formatSize(file.size)}</TableCell>
+                            <TableCell>{formatRelative(file.updatedAt)}</TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
             </div>
           </div>
         </section>
 
-        <section className="flex flex-col gap-2.5">
-          <div className="flex-1 border border-pink-200/80 bg-white/95 p-2.5 shadow-md">
-            <div className="flex items-center justify-between">
-              <div>
-                <h2 className="text-[15px] font-semibold sm:text-lg">{currentLabel}</h2>
-                <p className="text-[11px] text-muted-foreground sm:text-sm">파일 {files.length}개</p>
-              </div>
+        <section className="hidden border border-pink-200/80 bg-white/95 p-2.5 shadow-md sm:block">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-lg font-semibold">파일 · 폴더 업로드</h2>
+              <p className="text-sm text-muted-foreground">드래그하거나 선택해서 {currentLabel || "루트"}로 저장하세요.</p>
             </div>
-
-            {files.length === 0 ? (
-              <div className="mt-4 flex flex-1 flex-col items-center justify-center gap-3 border border-dashed border-pink-200 px-5 py-10 text-center sm:min-h-[300px]">
-                <FolderIcon className="size-8 text-rose-300" />
-                <p className="font-medium">비어 있어요. 파일을 업로드해 보세요.</p>
-                <p className="text-sm text-muted-foreground">새 폴더를 만들고 소중한 순간을 채워보세요.</p>
-              </div>
-            ) : (
-              <div className="mt-3 overflow-hidden border border-pink-100">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="w-8">
-                        <input
-                          type="checkbox"
-                          aria-label="모두 선택"
-                          checked={allSelected}
-                          onChange={handleSelectAll}
-                          className="size-4 accent-rose-500"
-                        />
-                      </TableHead>
-                      <TableHead>파일명</TableHead>
-                      <TableHead className="hidden sm:table-cell">크기</TableHead>
-                      <TableHead>업데이트</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {files.map((file) => {
-                      const previewType = getPreviewType(file);
-                      const previewUrl = previewType ? getPreviewUrl(file) : null;
-                      return (
-                        <TableRow
-                          key={file.id}
-                          className="cursor-pointer"
-                          onClick={() => setPreviewFile(file)}
-                        >
-                          <TableCell className="w-8">
-                            <input
-                              type="checkbox"
-                              aria-label={`${file.name} 선택`}
-                              checked={selectedFileIds.has(file.id)}
-                              onChange={() => toggleFileSelection(file.id)}
-                              onClick={(event) => event.stopPropagation()}
-                              className="size-4 accent-rose-500"
-                            />
-                          </TableCell>
-                          <TableCell>
-                            <div className="flex items-center gap-3">
-                              <div className="h-12 w-12 overflow-hidden border border-pink-100 bg-white">
-                                {previewType === "image" && previewUrl ? (
-                                  // eslint-disable-next-line @next/next/no-img-element
-                                  <img
-                                    src={previewUrl ?? undefined}
-                                    alt={file.name}
-                                    loading="lazy"
-                                    className="h-full w-full object-cover"
-                                  />
-                                ) : previewType === "video" && previewUrl ? (
-                                  <video
-                                    src={previewUrl}
-                                    className="h-full w-full object-cover"
-                                    muted
-                                    playsInline
-                                    loop
-                                    preload="metadata"
-                                  />
-                                ) : previewType ? (
-                                  <div className="flex h-full w-full items-center justify-center text-[10px] text-muted-foreground">
-                                    로딩 중...
-                                  </div>
-                                ) : (
-                                  <div className="flex h-full w-full items-center justify-center">
-                                    <FileIcon
-                                      extension={getExtension(file.name)}
-                                      {...(defaultStyles[getExtension(file.name)] || defaultStyles.default)}
-                                    />
-                                  </div>
-                                )}
-                              </div>
-                              <div className="flex flex-col">
-                                <span className="text-sm font-semibold text-foreground">{file.name}</span>
-                              </div>
-                            </div>
-                          </TableCell>
-                          <TableCell className="hidden sm:table-cell">{formatSize(file.size)}</TableCell>
-                          <TableCell>{formatRelative(file.updatedAt)}</TableCell>
-                        </TableRow>
-                      );
-                    })}
-                  </TableBody>
-                </Table>
-              </div>
-            )}
+            <UploadCloudIcon className="size-5 text-rose-400" />
           </div>
-
-          <div className="hidden border border-pink-200/80 bg-white/95 p-2.5 shadow-md sm:block">
-            <div className="flex items-center justify-between">
-              <div>
-                <h2 className="text-lg font-semibold">파일 · 폴더 업로드</h2>
-                <p className="text-sm text-muted-foreground">드래그하거나 선택해서 {currentLabel || "루트"}로 저장하세요.</p>
+          <div className="mt-3 grid gap-3 lg:grid-cols-2">
+            <form className="space-y-3 border border-pink-100 p-3" onSubmit={handleFileUploadSubmit}>
+              <input type="hidden" name="folder" value={currentFolder} />
+              <div
+                className={`border-2 border-dashed p-5 text-center transition ${fileDropActive ? "border-rose-400 bg-rose-50" : "border-pink-200"}`}
+                onDragOver={(event) => handleDragOver(event, "file")}
+                onDragLeave={(event) => handleDragLeave(event, "file")}
+                onDrop={(event) => handleDrop(event, "file")}
+              >
+                <p className="text-sm text-muted-foreground">파일을 드래그하거나 버튼으로 선택하세요.</p>
+                <div className="mt-4 flex flex-col items-center gap-2">
+                  <Button type="button" size="sm" onClick={() => fileInputRef.current?.click()}>
+                    파일 선택
+                  </Button>
+                  <p className="text-xs text-muted-foreground">현재 폴더: {currentLabel}</p>
+                </div>
+                <Input ref={fileInputRef} type="file" multiple className="hidden" onChange={handleFileSelectionChange} />
               </div>
-              <UploadCloudIcon className="size-5 text-rose-400" />
-            </div>
-            <div className="mt-3 grid gap-3 lg:grid-cols-2">
-              <form className="space-y-3 border border-pink-100 p-3" onSubmit={handleFileUploadSubmit}>
-                <input type="hidden" name="folder" value={currentFolder} />
-                <div
-                  className={`border-2 border-dashed p-5 text-center transition ${fileDropActive ? "border-rose-400 bg-rose-50" : "border-pink-200"}`}
-                  onDragOver={(event) => handleDragOver(event, "file")}
-                  onDragLeave={(event) => handleDragLeave(event, "file")}
-                  onDrop={(event) => handleDrop(event, "file")}
-                >
-                  <p className="text-sm text-muted-foreground">파일을 드래그하거나 버튼으로 선택하세요.</p>
-                  <div className="mt-4 flex flex-col items-center gap-2">
-                    <Button type="button" size="sm" onClick={() => fileInputRef.current?.click()}>
-                      파일 선택
-                    </Button>
-                    <p className="text-xs text-muted-foreground">현재 폴더: {currentLabel}</p>
-                  </div>
-                  <Input ref={fileInputRef} type="file" multiple className="hidden" onChange={handleFileSelectionChange} />
-                </div>
-                <ul className="space-y-1 text-xs text-muted-foreground">
-                  {fileSelection.length === 0 ? (
-                    <li>선택된 파일이 없습니다.</li>
-                  ) : (
-                    fileSelection.map((item, index) => <li key={`${item}-${index}`}>{item}</li>)
-                  )}
-                </ul>
-                <Button type="submit" className="w-full" disabled={isUploading}>
-                  파일 업로드
-                </Button>
-              </form>
+              <ul className="space-y-1 text-xs text-muted-foreground">
+                {fileSelection.length === 0 ? (
+                  <li>선택된 파일이 없습니다.</li>
+                ) : (
+                  fileSelection.map((item, index) => <li key={`${item}-${index}`}>{item}</li>)
+                )}
+              </ul>
+              <Button type="submit" className="w-full" disabled={isUploading}>
+                파일 업로드
+              </Button>
+            </form>
 
-              <form className="space-y-3 border border-pink-100 p-3" onSubmit={handleFolderUploadSubmit}>
-                <input type="hidden" name="folder" value={currentFolder} />
-                <div
-                  className={`border-2 border-dashed p-5 text-center transition ${folderDropActive ? "border-rose-400 bg-rose-50" : "border-pink-200"}`}
-                  onDragOver={(event) => handleDragOver(event, "folder")}
-                  onDragLeave={(event) => handleDragLeave(event, "folder")}
-                  onDrop={(event) => handleDrop(event, "folder")}
-                >
-                  <p className="text-sm text-muted-foreground">폴더를 드래그하거나 버튼으로 선택하세요.</p>
-                  <div className="mt-4 flex flex-col items-center gap-2">
-                    <Button type="button" size="sm" onClick={() => folderInputRef.current?.click()}>
-                      폴더 선택
-                    </Button>
-                    <p className="text-xs text-muted-foreground">현재 폴더: {currentLabel}</p>
-                  </div>
-                  <Input
-                    ref={folderInputRef}
-                    type="file"
-                    multiple
-                    webkitdirectory="true"
-                    directory="true"
-                    className="hidden"
-                    onChange={handleFolderSelectionChange}
-                  />
+            <form className="space-y-3 border border-pink-100 p-3" onSubmit={handleFolderUploadSubmit}>
+              <input type="hidden" name="folder" value={currentFolder} />
+              <div
+                className={`border-2 border-dashed p-5 text-center transition ${folderDropActive ? "border-rose-400 bg-rose-50" : "border-pink-200"}`}
+                onDragOver={(event) => handleDragOver(event, "folder")}
+                onDragLeave={(event) => handleDragLeave(event, "folder")}
+                onDrop={(event) => handleDrop(event, "folder")}
+              >
+                <p className="text-sm text-muted-foreground">폴더를 드래그하거나 버튼으로 선택하세요.</p>
+                <div className="mt-4 flex flex-col items-center gap-2">
+                  <Button type="button" size="sm" onClick={() => folderInputRef.current?.click()}>
+                    폴더 선택
+                  </Button>
+                  <p className="text-xs text-muted-foreground">현재 폴더: {currentLabel}</p>
                 </div>
-                <ul className="space-y-1 text-xs text-muted-foreground">
-                  {folderSelection.length === 0 ? (
-                    <li>선택된 폴더가 없습니다.</li>
-                  ) : (
-                    folderSelection.map((item, index) => <li key={`${item}-${index}`}>{item}</li>)
-                  )}
-                </ul>
-                <Button type="submit" className="w-full" disabled={isUploading}>
-                  폴더 업로드
-                </Button>
-              </form>
-            </div>
-            {isUploading && (
-              <div className="mt-3 space-y-2">
-                <div className="flex items-center justify-between text-xs text-muted-foreground">
-                  <span>업로드 중...</span>
-                  <span>{progress}%</span>
-                </div>
-                <Progress value={progress} className="h-2" />
+                <Input
+                  ref={folderInputRef}
+                  type="file"
+                  multiple
+                  webkitdirectory="true"
+                  directory="true"
+                  className="hidden"
+                  onChange={handleFolderSelectionChange}
+                />
               </div>
-            )}
+              <ul className="space-y-1 text-xs text-muted-foreground">
+                {folderSelection.length === 0 ? (
+                  <li>선택된 폴더가 없습니다.</li>
+                ) : (
+                  folderSelection.map((item, index) => <li key={`${item}-${index}`}>{item}</li>)
+                )}
+              </ul>
+              <Button type="submit" className="w-full" disabled={isUploading}>
+                폴더 업로드
+              </Button>
+            </form>
           </div>
+          {isUploading && (
+            <div className="mt-3 space-y-2">
+              <div className="flex items-center justify-between text-xs text-muted-foreground">
+                <span>업로드 중...</span>
+                <span>{progress}%</span>
+              </div>
+              <Progress value={progress} className="h-2" />
+            </div>
+          )}
         </section>
       </div>
 
@@ -889,6 +912,45 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
           </div>
         </div>
       </div>
+
+      <Dialog
+        open={isFolderDialogOpen}
+        onOpenChange={(open) => {
+          setIsFolderDialogOpen(open);
+          if (!open) {
+            setNewFolder("");
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>새 폴더 만들기</DialogTitle>
+            <DialogDescription>현재 위치({currentLabel || "루트"})에 폴더를 추가합니다.</DialogDescription>
+          </DialogHeader>
+          <form className="space-y-4" onSubmit={handleCreateFolder}>
+            <div className="space-y-2">
+              <Label htmlFor="folder-name" className="text-xs text-muted-foreground">
+                폴더 이름
+              </Label>
+              <Input
+                id="folder-name"
+                value={newFolder}
+                onChange={(event) => setNewFolder(event.target.value)}
+                placeholder="예: photos"
+                autoFocus
+              />
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button type="button" variant="ghost" onClick={() => setIsFolderDialogOpen(false)}>
+                취소
+              </Button>
+              <Button type="submit" disabled={!newFolder.trim() || isMutating}>
+                만들기
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={Boolean(previewFile)} onOpenChange={(open) => (!open ? setPreviewFile(null) : null)}>
         <DialogContent className="max-w-md sm:max-w-lg">
