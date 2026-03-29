@@ -573,63 +573,12 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
     <div className="flex min-h-screen flex-col gap-6 bg-gradient-to-br from-pink-50 via-rose-50 to-white px-4 py-6 sm:px-6">
       <div className="flex flex-col gap-4">
         <section className="border border-pink-200/80 bg-white/95 p-4 shadow-md">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-            <div>
-              <p className="text-xs uppercase tracking-[0.3em] text-rose-400">지현&정민 저장소</p>
-              <p className="text-base font-semibold text-foreground">{bucket}</p>
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                onClick={() => handleRefresh(currentFolder)}
-                disabled={isRefreshing}
-                aria-label="새로고침"
-              >
-                <RefreshCcwIcon className="size-4" />
-              </Button>
-              <Button variant="ghost" size="icon" onClick={handleLogout} aria-label="로그아웃">
-                <LogOutIcon className="size-4" />
-              </Button>
-            </div>
-          </div>
-          <div className="mt-4 flex flex-wrap items-center gap-2 text-xs text-muted-foreground sm:text-sm">
-            {breadcrumbItems.map((item, index) => {
-              const isLast = index === breadcrumbItems.length - 1;
-              return (
-                <div key={`${item.path || "root"}-${index}`} className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => handleRefresh(item.path, false)}
-                    className={`rounded-full px-3 py-1 font-medium transition ${
-                      isLast ? "bg-rose-100 text-rose-500" : "text-muted-foreground hover:bg-rose-50 hover:text-rose-500"
-                    }`}
-                  >
-                    {item.label}
-                  </button>
-                  {index < breadcrumbItems.length - 1 && <span className="text-rose-200">/</span>}
-                </div>
-              );
-            })}
-          </div>
-          {selectedCount > 0 && (
-            <div className="mt-4 flex flex-wrap items-center justify-between rounded-2xl border border-pink-200/80 bg-rose-50/80 p-2.5 text-xs text-muted-foreground sm:text-sm">
-              <span>{selectedCount}개의 파일이 선택되었습니다.</span>
-              <div className="flex gap-2">
-                <Button size="sm" variant="secondary" onClick={handleBulkDownload}>
-                  다운로드
-                </Button>
-                <Button size="sm" variant="destructive" onClick={handleBulkDelete}>
-                  삭제
-                </Button>
-                <Button size="sm" variant="ghost" onClick={clearSelection}>
-                  해제
-                </Button>
-              </div>
-            </div>
-          )}
-        </section>
+          <div className="flex flex-row gap-3 items-center justify-between">
+            <p className="text-xs uppercase tracking-[0.3em] text-rose-400">지현&정민 저장소</p>
+            <Button variant="ghost" size="icon" onClick={handleLogout} aria-label="로그아웃">
+              <LogOutIcon className="size-4" />
+            </Button>
+          </div>        </section>
 
         <section className="border border-pink-200/80 bg-white/95 p-4 shadow-md">
           <div className="space-y-4">
@@ -657,14 +606,8 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
                 </Button>
               </div>
             </div>
-            <div className="rounded-2xl border border-pink-200/80 p-3">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h2 className="text-[15px] font-semibold sm:text-lg">{currentLabel}</h2>
-                  <p className="text-[11px] text-muted-foreground sm:text-sm">파일 {files.length}개</p>
-                </div>
-              </div>
 
+            <div className="rounded-2xl border border-pink-200/80 p-3">
               {tableItems.length === 0 ? (
                 <div className="mt-4 flex flex-1 flex-col items-center justify-center gap-3 border border-dashed border-pink-200 px-5 py-10 text-center sm:min-h-[300px]">
                   <FolderIcon className="size-8 text-rose-300" />
@@ -672,7 +615,23 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
                   <p className="text-sm text-muted-foreground">새 폴더를 만들고 소중한 순간을 채워보세요.</p>
                 </div>
               ) : (
-                <div className="mt-3 overflow-hidden border border-pink-100">
+                <div className="overflow-hidden">
+                  {selectedCount > 0 && (
+                    <div className="mt-4 flex flex-wrap items-center justify-between px-2.5 text-xs text-muted-foreground sm:text-sm">
+                      <span>{selectedCount}개의 파일이 선택되었습니다.</span>
+                      <div className="flex gap-2">
+                        <Button size="sm" variant="secondary" onClick={handleBulkDownload}>
+                          다운로드
+                        </Button>
+                        <Button size="sm" variant="destructive" onClick={handleBulkDelete}>
+                          삭제
+                        </Button>
+                        <Button size="sm" variant="ghost" onClick={clearSelection}>
+                          해제
+                        </Button>
+                      </div>
+                    </div>
+                  )}
                   <Table>
                     <TableHeader>
                       <TableRow>
@@ -704,9 +663,8 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
                               <TableCell>
                                 <div className="flex items-center justify-between gap-2">
                                   <div className="flex items-center gap-3">
-                                    <div className={`flex h-12 w-12 items-center justify-center border ${
-                                      active ? "border-rose-300 bg-rose-50" : "border-pink-100 bg-white"
-                                    }`}>
+                                    <div className={`flex h-12 w-12 items-center justify-center border ${active ? "border-rose-300 bg-rose-50" : "border-pink-100 bg-white"
+                                      }`}>
                                       <FolderIcon className="size-5 text-rose-400" />
                                     </div>
                                     <div className="flex flex-col">
@@ -810,6 +768,24 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
                   </Table>
                 </div>
               )}
+              <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground sm:text-sm">
+                {breadcrumbItems.map((item, index) => {
+                  const isLast = index === breadcrumbItems.length - 1;
+                  return (
+                    <div key={`${item.path || "root"}-${index}`} className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => handleRefresh(item.path, false)}
+                        className={`rounded-full px-3 py-1 font-medium transition ${isLast ? "bg-rose-100 text-rose-500" : "text-muted-foreground hover:bg-rose-50 hover:text-rose-500"
+                          }`}
+                      >
+                        {item.label}
+                      </button>
+                      {index < breadcrumbItems.length - 1 && <span className="text-rose-200">/</span>}
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           </div>
         </section>
