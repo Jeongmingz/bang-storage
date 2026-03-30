@@ -193,6 +193,39 @@ export async function createFolder(options: { name: string; parent?: string }) {
   );
 }
 
+export async function listAllFolders() {
+  const s3 = getClient();
+  let ContinuationToken: string | undefined;
+  const folders = new Set<string>();
+
+  do {
+    const { Contents = [], NextContinuationToken } = await s3.send(
+      new ListObjectsV2Command({
+        Bucket: BUCKET,
+        ContinuationToken,
+      }),
+    );
+
+    for (const item of Contents) {
+      const key = item.Key;
+      if (!key || !key.endsWith("/.keep")) continue;
+      const normalized = key.replace(/\/+/, "/");
+      const segments = normalized.split("/").filter(Boolean);
+      if (segments.length <= 1) continue;
+      const folderSegments = segments.slice(0, -1);
+      for (let index = 1; index <= folderSegments.length; index += 1) {
+        const slice = folderSegments.slice(0, index);
+        const joined = slice.map((segment) => decodeSegment(segment)).join("/");
+        if (joined) folders.add(joined);
+      }
+    }
+
+    ContinuationToken = NextContinuationToken;
+  } while (ContinuationToken);
+
+  return Array.from(folders).sort((a, b) => a.localeCompare(b));
+}
+
 export async function prepareUploadTarget(options: {
   fileName: string;
   folder?: string;
@@ -298,6 +331,59 @@ export async function renameObject(options: { path: string; newName: string }) {
     );
     await deleteFile(path);
   }
+
+  return candidate;
+}
+
+export async function moveObject(options: { path: string; targetFolder?: string }) {
+  const { path, targetFolder } = options;
+  const normalizedTarget = normalizePath(targetFolder);
+  const segments = path.split("/").filter(Boolean);
+  if (segments.length === 0) throw new Error("잘못된 경로입니다.");
+  const fileName = segments.pop()!;
+  const sourceFolder = segments.join("/");
+  const destinationFolder = normalizedTarget;
+
+  const originalPath = path;
+  const targetBase = destinationFolder ? `${destinationFolder}/${fileName}` : fileName;
+  const match = fileName.match(/(.*)(\.[^.]*)$/);
+  const nameWithoutExt = match ? match[1] : fileName;
+  const ext = match ? match[2] : "";
+
+  let candidate = targetBase;
+  let counter = 1;
+  const s3 = getClient();
+
+  while (candidate !== originalPath) {
+    try {
+      await s3.send(new HeadObjectCommand({ Bucket: BUCKET, Key: candidate }));
+      const nextName = `${nameWithoutExt}(${counter})${ext}`;
+      candidate = destinationFolder ? `${destinationFolder}/${nextName}` : nextName;
+      counter += 1;
+    } catch (error) {
+      const status = (error as { $metadata?: { httpStatusCode?: number } })?.$metadata?.httpStatusCode;
+      if (status === 404) {
+        break;
+      }
+      throw error;
+    }
+  }
+
+  if (candidate === originalPath) {
+    return candidate;
+  }
+
+  await s3.send(
+    new CopyObjectCommand({
+      Bucket: BUCKET,
+      CopySource: `${BUCKET}/${encodePathForUrl(originalPath)}`,
+      Key: candidate,
+      MetadataDirective: "COPY",
+    }),
+  );
+  await deleteFile(originalPath);
+
+  // remove empty source folder .keep? optional not necessary.
 
   return candidate;
 }

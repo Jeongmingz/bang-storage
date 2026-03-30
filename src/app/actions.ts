@@ -14,7 +14,9 @@ import {
   deleteFile,
   deleteFolder,
   getBucketLabel,
+  listAllFolders,
   listEntries,
+  moveObject,
   prepareUploadTarget,
   renameObject,
 } from "@/lib/storage";
@@ -230,4 +232,46 @@ export async function renameFileAction(path: string, newName: string, currentFol
   const snapshot = await listEntries(currentFolder);
   revalidatePath("/");
   return { success: true, message: "이름을 변경했습니다.", snapshot };
+}
+
+export async function listFoldersAction(): Promise<ActionResult<{ folders: string[] }>> {
+  const auth = await ensureAuth();
+  if (auth !== true) {
+    return auth as ActionResult<{ folders: string[] }>;
+  }
+
+  try {
+    const folders = await listAllFolders();
+    return { success: true, folders };
+  } catch (error) {
+    return {
+      success: false,
+      message: error instanceof Error ? error.message : "폴더 목록을 불러오지 못했습니다.",
+    };
+  }
+}
+
+export async function moveFilesAction(paths: string[], destination: string, currentFolder?: string): Promise<ActionResult<{ snapshot: Awaited<ReturnType<typeof listEntries>> }>> {
+  const auth = await ensureAuth();
+  if (auth !== true) {
+    return auth as ActionResult<{ snapshot: Awaited<ReturnType<typeof listEntries>> }>;
+  }
+
+  const unique = [...new Set(paths)].filter(Boolean);
+  if (unique.length === 0) {
+    return { success: false, message: "이동할 파일을 선택하세요." };
+  }
+
+  try {
+    await Promise.all(unique.map((path) => moveObject({ path, targetFolder: destination || undefined })));
+  } catch (error) {
+    return {
+      success: false,
+      message: error instanceof Error ? error.message : "파일을 이동하지 못했습니다.",
+    };
+  }
+
+  const snapshot = await listEntries(currentFolder);
+  revalidatePath("/");
+  return { success: true, message: "파일을 이동했습니다.", snapshot };
 }

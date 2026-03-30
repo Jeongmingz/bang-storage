@@ -10,6 +10,7 @@ import {
 } from "react";
 import { useRouter } from "next/navigation";
 import {
+  CheckIcon,
   FolderIcon,
   FolderPlusIcon,
   LogOutIcon,
@@ -27,6 +28,8 @@ import {
   deleteFilesAction,
   deleteFolderAction,
   generateDownloadLink,
+  listFoldersAction,
+  moveFilesAction,
   logout,
   refreshFiles,
   renameFileAction,
@@ -58,6 +61,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import {
+  Command,
   CommandDialog,
   CommandEmpty,
   CommandGroup,
@@ -113,17 +117,23 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
   const [isMutating, startMutate] = useTransition();
   const [isRefreshing, startRefreshing] = useTransition();
   const [progress, setProgress] = useState(0);
+  type UploadStatus = "pending" | "uploading" | "success" | "error";
+  type UploadItem = { id: string; name: string; size: number; progress: number; status: UploadStatus };
+  const [uploadItems, setUploadItems] = useState<UploadItem[]>([]);
   const [fileSelection, setFileSelection] = useState<string[]>([]);
   const [folderSelection, setFolderSelection] = useState<string[]>([]);
   const [newFolder, setNewFolder] = useState("");
   const [isFolderDialogOpen, setIsFolderDialogOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [isCommandOpen, setIsCommandOpen] = useState(false);
+  const [isMoveDialogOpen, setIsMoveDialogOpen] = useState(false);
+  const [availableFolders, setAvailableFolders] = useState<string[]>([]);
+  const [foldersLoaded, setFoldersLoaded] = useState(false);
+  const [isFoldersLoading, setIsFoldersLoading] = useState(false);
+  const [moveTarget, setMoveTarget] = useState<string | null>(null);
   const [previewFile, setPreviewFile] = useState<StorageFile | null>(null);
   const [renameTarget, setRenameTarget] = useState<StorageFile | null>(null);
   const [renameValue, setRenameValue] = useState("");
-  const [fileDropActive, setFileDropActive] = useState(false);
-  const [folderDropActive, setFolderDropActive] = useState(false);
   const [quickUploadMode, setQuickUploadMode] = useState<"file" | "folder" | null>(null);
   const [fileUrls, setFileUrls] = useState<Record<string, { url: string; expiresAt: number }>>({});
   const [selectedFileIds, setSelectedFileIds] = useState<Set<string>>(new Set());
@@ -202,6 +212,10 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
     }
   };
 
+  const updateUploadItem = (uploadId: string, partial: Partial<UploadItem>) => {
+    setUploadItems((prev) => prev.map((item) => (item.id === uploadId ? { ...item, ...partial } : item)));
+  };
+
   const uploadFilesWithMode = async (files: File[], useRelativePaths: boolean) => {
     if (files.length === 0) {
       toast.error("업로드할 파일을 선택하세요.");
@@ -210,11 +224,24 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
 
     setIsUploading(true);
     setProgress(0);
+    const uploadDescriptor = files.map((file, index) => ({
+      id: `${Date.now()}-${index}-${file.name}`,
+      file: file as RelativeFile,
+    }));
+    setUploadItems(
+      uploadDescriptor.map(({ id, file }) => ({
+        id,
+        name: file.name,
+        size: file.size,
+        progress: 0,
+        status: "pending" as UploadStatus,
+      })),
+    );
 
-    try {
-      for (let index = 0; index < files.length; index += 1) {
-        const file = files[index] as RelativeFile;
-        const payload = new FormData();
+    const uploadSingleFile = async (entry: { id: string; file: RelativeFile }) => {
+      const { id, file } = entry;
+      updateUploadItem(id, { status: "uploading", progress: 0 });
+      const payload = new FormData();
         payload.set("fileName", file.name);
         const relativeFolder = useRelativePaths
           ? deriveRelativeFolder(currentFolder ?? "", file.webkitRelativePath)
@@ -222,32 +249,53 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
         if (relativeFolder) payload.set("folder", relativeFolder);
         if (file.type) payload.set("contentType", file.type);
 
-        const uploadTarget = await createUploadUrl(payload);
-        if (!uploadTarget.success || !uploadTarget.uploadUrl) {
-          toast.error(uploadTarget.message ?? "업로드 URL을 만들지 못했습니다.");
-          return;
-        }
-
-        const response = await fetch(uploadTarget.uploadUrl, {
-          method: "PUT",
-          headers: {
-            "Content-Type": file.type || "application/octet-stream",
-          },
-          body: file,
-        });
-
-        if (!response.ok) {
-          toast.error("업로드 중 오류가 발생했습니다.");
-          return;
-        }
-
-        setProgress(Math.round(((index + 1) / files.length) * 100));
+      const uploadTarget = await createUploadUrl(payload);
+      if (!uploadTarget.success || !uploadTarget.uploadUrl) {
+        updateUploadItem(id, { status: "error" });
+        throw new Error(uploadTarget.message ?? "업로드 URL을 만들지 못했습니다.");
       }
 
+      await new Promise<void>((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open("PUT", uploadTarget.uploadUrl);
+        if (file.type) {
+          xhr.setRequestHeader("Content-Type", file.type);
+        }
+        xhr.upload.onprogress = (event) => {
+          if (event.lengthComputable) {
+            const percent = Math.round((event.loaded / event.total) * 100);
+            updateUploadItem(id, { progress: percent });
+            setProgress(percent);
+          }
+        };
+        xhr.onload = () => {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            updateUploadItem(id, { progress: 100, status: "success" });
+            resolve();
+          } else {
+            updateUploadItem(id, { status: "error" });
+            reject(new Error("업로드 중 오류가 발생했습니다."));
+          }
+        };
+        xhr.onerror = () => {
+          updateUploadItem(id, { status: "error" });
+          reject(new Error("업로드 중 오류가 발생했습니다."));
+        };
+        xhr.send(file);
+      });
+    };
+
+    try {
+      const uploadResults = await Promise.allSettled(uploadDescriptor.map((entry) => uploadSingleFile(entry)));
+      const hasFailure = uploadResults.some((result) => result.status === "rejected");
       const refreshed = await refreshFiles(currentFolder);
       if (refreshed.success && refreshed.snapshot) {
         handleSnapshotUpdate(refreshed.snapshot, refreshed.bucket);
-        toast.success(`${files.length}개의 파일을 업로드했습니다.`);
+        if (hasFailure) {
+          toast.error("일부 파일 업로드에 실패했습니다.");
+        } else {
+          toast.success(`${files.length}개의 파일을 업로드했습니다.`);
+        }
       } else if (!refreshed.success) {
         toast.error(refreshed.message);
         handleUnauthorized(refreshed.message);
@@ -257,6 +305,7 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
     } finally {
       setIsUploading(false);
       setProgress(0);
+      setUploadItems([]);
     }
   };
 
@@ -276,52 +325,6 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
       setFolderSelection([]);
       if (folderInputRef.current) folderInputRef.current.value = "";
     });
-  };
-
-  const handleDrop = (event: React.DragEvent<HTMLDivElement>, mode: "file" | "folder") => {
-    event.preventDefault();
-    if (mode === "file") {
-      setFileDropActive(false);
-    } else {
-      setFolderDropActive(false);
-    }
-
-    const files = Array.from(event.dataTransfer.files ?? []).filter((file) => file.size > 0);
-    if (files.length === 0) return;
-
-    if (mode === "file") {
-      setFileSelection(files.map((file) => `${file.name} · ${formatSize(file.size)}`));
-    } else {
-      setFolderSelection(
-        files.map((file) => {
-          const relativeFolder = deriveRelativeFolder(currentFolder ?? "", (file as RelativeFile).webkitRelativePath);
-          const label = relativeFolder ? `${relativeFolder}/${file.name}` : file.name;
-          return `${label} · ${formatSize(file.size)}`;
-        }),
-      );
-    }
-
-    uploadFilesWithMode(files, mode === "folder").catch(() => {
-      /* errors handled in helper */
-    });
-  };
-
-  const handleDragOver = (event: React.DragEvent<HTMLDivElement>, mode: "file" | "folder") => {
-    event.preventDefault();
-    if (mode === "file") {
-      setFileDropActive(true);
-    } else {
-      setFolderDropActive(true);
-    }
-  };
-
-  const handleDragLeave = (event: React.DragEvent<HTMLDivElement>, mode: "file" | "folder") => {
-    event.preventDefault();
-    if (mode === "file") {
-      setFileDropActive(false);
-    } else {
-      setFolderDropActive(false);
-    }
   };
 
   const handleQuickPick = (mode: "file" | "folder") => {
@@ -439,6 +442,52 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
   };
 
   const clearSelection = () => setSelectedFileIds(new Set());
+
+  const handleOpenMoveDialog = () => {
+    if (selectedCount === 0) {
+      toast.error("이동할 파일을 선택하세요.");
+      return;
+    }
+    setMoveTarget(currentFolder || "");
+    setIsMoveDialogOpen(true);
+    if (!foldersLoaded) {
+      loadFolders();
+    }
+  };
+
+  const handleMoveSubmit = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (selectedFiles.length === 0) {
+      toast.error("이동할 파일을 선택하세요.");
+      return;
+    }
+    if (moveTarget === null) {
+      toast.error("이동할 폴더를 선택하세요.");
+      return;
+    }
+    const destination = moveTarget;
+    if (destination === (currentFolder || "")) {
+      toast.error("다른 폴더를 선택하세요.");
+      return;
+    }
+
+    const paths = selectedFiles.map((file) => file.path);
+
+    startMutate(() => {
+      moveFilesAction(paths, destination, currentFolder).then((result) => {
+        if (result.success && result.snapshot) {
+          handleSnapshotUpdate(result.snapshot);
+          toast.success("파일을 이동했습니다.");
+          clearSelection();
+          setIsMoveDialogOpen(false);
+          setMoveTarget(null);
+        } else if (!result.success) {
+          toast.error(result.message);
+          handleUnauthorized(result.message);
+        }
+      });
+    });
+  };
 
   const handleBulkDelete = () => {
     if (selectedFiles.length === 0) {
@@ -600,6 +649,46 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
     return () => window.removeEventListener("keydown", handleKeyDown, true);
   }, []);
 
+  useEffect(() => {
+    const shouldLock = isCommandOpen || isFolderDialogOpen || Boolean(previewFile) || isMoveDialogOpen;
+    const html = document.documentElement;
+    const body = document.body;
+    const previousHtml = html.style.overflow;
+    const previousBody = body.style.overflow;
+
+    if (shouldLock) {
+      html.style.overflow = "hidden";
+      body.style.overflow = "hidden";
+    } else {
+      html.style.overflow = "";
+      body.style.overflow = "";
+    }
+
+    return () => {
+      html.style.overflow = previousHtml;
+      body.style.overflow = previousBody;
+    };
+  }, [isCommandOpen, isFolderDialogOpen, isMoveDialogOpen, previewFile]);
+
+  const loadFolders = useCallback(() => {
+    setIsFoldersLoading(true);
+    listFoldersAction()
+      .then((result) => {
+        if (result.success) {
+          setAvailableFolders(result.folders);
+          setFoldersLoaded(true);
+        } else {
+          toast.error(result.message);
+        }
+      })
+      .catch(() => {
+        toast.error("폴더 목록을 불러오지 못했습니다.");
+      })
+      .finally(() => {
+        setIsFoldersLoading(false);
+      });
+  }, []);
+
   const breadcrumbItems = useMemo(() => {
     const segments = currentFolder ? currentFolder.split("/").filter(Boolean) : [];
     const items = [{ label: "전체", path: "" }];
@@ -612,8 +701,8 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
   }, [currentFolder]);
 
   return (
-    <div className="flex min-h-screen flex-col gap-6 bg-gradient-to-br from-pink-50 via-rose-50 to-white px-4 py-6 sm:px-6">
-      <div className="flex flex-col gap-4">
+    <div className="flex h-screen flex-col gap-6 overflow-hidden bg-gradient-to-br from-pink-50 via-rose-50 to-white px-4 py-6 sm:px-6">
+      <div className="flex flex-1 min-h-0 flex-col gap-4 overflow-hidden">
         <section className="border border-pink-200/80 bg-white/95 p-4 shadow-md">
           <div className="flex flex-row gap-3 items-center justify-between">
             <p className="text-xs uppercase tracking-[0.3em] text-rose-400">지현&정민 저장소</p>
@@ -622,8 +711,8 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
             </Button>
           </div>        </section>
 
-        <section className="border border-pink-200/80 bg-white/95 p-4 shadow-md">
-          <div className="space-y-4">
+        <section className="flex min-h-0 flex-1 flex-col border border-pink-200/80 bg-white/95 p-4 shadow-md">
+          <div className="flex h-full min-h-0 flex-col gap-4 overflow-hidden">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
                 <h2 className="text-sm font-semibold text-foreground sm:text-base">폴더 탐색</h2>
@@ -663,50 +752,55 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
               </div>
             </div>
 
-            <div className="rounded-2xl border border-pink-200/80 p-3">
-              <div>
-                <h2 className="text-[15px] font-semibold sm:text-lg">{currentLabel}</h2>
-                <p className="text-[11px] text-muted-foreground sm:text-sm">파일 {displayFileCountLabel}개</p>
-              </div>
-
-              {selectedCount > 0 && (
-                <div className="mt-3 flex flex-wrap items-center justify-between rounded-xl border border-rose-100/80 bg-rose-50/60 px-3 py-2 text-xs text-muted-foreground sm:text-sm">
-                  <span>{selectedCount}개의 파일이 선택되었습니다.</span>
-                  <div className="flex gap-2">
-                    <Button size="sm" variant="secondary" onClick={handleBulkDownload}>
-                      다운로드
-                    </Button>
-                    <Button size="sm" variant="destructive" onClick={handleBulkDelete}>
-                      삭제
-                    </Button>
-                    <Button size="sm" variant="ghost" onClick={clearSelection}>
-                      해제
-                    </Button>
-                  </div>
+            <div className="mt-2 flex min-h-0 flex-1">
+              <div className="flex h-full min-h-0 flex-1 flex-col rounded-2xl border border-pink-200/80 p-3">
+                <div>
+                  <h2 className="text-[15px] font-semibold sm:text-lg">{currentLabel}</h2>
+                  <p className="text-[11px] text-muted-foreground sm:text-sm">파일 {displayFileCountLabel}개</p>
                 </div>
-              )}
 
-              {tableItems.length > 0 && (
-                <div className="mt-3 overflow-hidden border border-pink-100">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead className="w-8">
-                          <input
-                            type="checkbox"
-                            aria-label="모두 선택"
-                            checked={allSelected}
-                            onChange={handleSelectAll}
-                            className="size-4 accent-rose-500"
-                          />
-                        </TableHead>
-                        <TableHead>파일명</TableHead>
-                        <TableHead className="hidden sm:table-cell">크기</TableHead>
-                        <TableHead>업데이트</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {tableItems.map((item) => {
+                {selectedCount > 0 && (
+                  <div className="mt-3 flex flex-wrap items-center justify-between rounded-xl border border-rose-100/80 bg-rose-50/60 px-3 py-2 text-xs text-muted-foreground sm:text-sm">
+                    <span>{selectedCount}개의 파일이 선택되었습니다.</span>
+                    <div className="flex gap-2">
+                      <Button size="sm" variant="secondary" onClick={handleBulkDownload}>
+                        다운로드
+                      </Button>
+                      <Button size="sm" variant="outline" onClick={handleOpenMoveDialog}>
+                        이동
+                      </Button>
+                      <Button size="sm" variant="destructive" onClick={handleBulkDelete}>
+                        삭제
+                      </Button>
+                      <Button size="sm" variant="ghost" onClick={clearSelection}>
+                        해제
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
+                {tableItems.length > 0 && (
+                  <div className="mt-3 flex min-h-0 flex-1 rounded-[18px] border border-pink-100 bg-white">
+                    <div className="max-h-[60vh] flex-1 overflow-y-auto">
+                      <Table className="[&_thead]:sticky [&_thead]:top-0 [&_thead]:z-10 [&_thead]:bg-white">
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead className="sticky top-0 z-10 w-8 bg-white">
+                              <input
+                                type="checkbox"
+                                aria-label="모두 선택"
+                                checked={allSelected}
+                                onChange={handleSelectAll}
+                                className="size-4 accent-rose-500"
+                              />
+                            </TableHead>
+                            <TableHead className="sticky top-0 z-10 bg-white">파일명</TableHead>
+                            <TableHead className="sticky top-0 z-10 hidden bg-white sm:table-cell">크기</TableHead>
+                            <TableHead className="sticky top-0 z-10 bg-white">업데이트</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {tableItems.map((item) => {
                         if (item.kind === "folder") {
                           const active = currentFolder === item.path;
                           return (
@@ -820,74 +914,74 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
                           </TableRow>
                         );
                       })}
-                    </TableBody>
-                  </Table>
-                </div>
-              )}
-              {showEmptyState && (
-                <div className="mt-4 flex flex-1 flex-col items-center justify-center gap-3 border border-dashed border-pink-200 px-5 py-10 text-center sm:min-h-[300px]">
-                  <FolderIcon className="size-8 text-rose-300" />
-                  <p className="font-medium">비어 있어요. 파일을 업로드해 보세요.</p>
-                  <p className="text-sm text-muted-foreground">새 폴더를 만들고 소중한 순간을 채워보세요.</p>
-                </div>
-              )}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  </div>
+                )}
+                {showEmptyState && (
+                  <div className="mt-4 flex flex-1 flex-col items-center justify-center gap-3 border border-dashed border-pink-200 px-5 py-10 text-center">
+                    <FolderIcon className="size-8 text-rose-300" />
+                    <p className="font-medium">비어 있어요. 파일을 업로드해 보세요.</p>
+                    <p className="text-sm text-muted-foreground">새 폴더를 만들고 소중한 순간을 채워보세요.</p>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </section>
 
-        <section className="hidden border border-pink-200/80 bg-white/95 p-2.5 shadow-md sm:block">
+        <section className="hidden flex-shrink-0 border border-pink-200/80 bg-white/95 p-3 shadow-md sm:block">
           <div className="flex items-center justify-between">
             <div>
               <h2 className="text-lg font-semibold">파일 · 폴더 업로드</h2>
-              <p className="text-sm text-muted-foreground">드래그하거나 선택해서 {currentLabel || "루트"}로 저장하세요.</p>
+              <p className="text-sm text-muted-foreground">버튼으로 선택해서 {currentLabel || "루트"}에 저장하세요.</p>
             </div>
             <UploadCloudIcon className="size-5 text-rose-400" />
           </div>
           <div className="mt-3 grid gap-3 lg:grid-cols-2">
-            <form className="space-y-3 border border-pink-100 p-3" onSubmit={handleFileUploadSubmit}>
+            <form className="space-y-3 rounded-2xl border border-pink-100 p-4" onSubmit={handleFileUploadSubmit}>
               <input type="hidden" name="folder" value={currentFolder} />
-              <div
-                className={`border-2 border-dashed p-5 text-center transition ${fileDropActive ? "border-rose-400 bg-rose-50" : "border-pink-200"}`}
-                onDragOver={(event) => handleDragOver(event, "file")}
-                onDragLeave={(event) => handleDragLeave(event, "file")}
-                onDrop={(event) => handleDrop(event, "file")}
-              >
-                <p className="text-sm text-muted-foreground">파일을 드래그하거나 버튼으로 선택하세요.</p>
-                <div className="mt-4 flex flex-col items-center gap-2">
-                  <Button type="button" size="sm" onClick={() => fileInputRef.current?.click()}>
-                    파일 선택
-                  </Button>
-                  <p className="text-xs text-muted-foreground">현재 폴더: {currentLabel}</p>
-                </div>
+              <div className="rounded-xl border border-pink-200/80 bg-rose-50/40 px-4 py-5 text-center">
+                <p className="text-sm text-muted-foreground">파일을 거래 없이 버튼으로 선택하세요.</p>
+                <Button
+                  type="button"
+                  size="sm"
+                  className="mt-4 w-full"
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  파일 선택
+                </Button>
+                <p className="mt-2 text-xs text-muted-foreground">현재 폴더: {currentLabel}</p>
                 <Input ref={fileInputRef} type="file" multiple className="hidden" onChange={handleFileSelectionChange} />
               </div>
               <ul className="space-y-1 text-xs text-muted-foreground">
                 {fileSelection.length === 0 ? (
-                  <li>선택된 파일이 없습니다.</li>
+                  <li>선택된 파일이 없습니다. 파일을 선택하면 업로드 버튼이 나타납니다.</li>
                 ) : (
                   fileSelection.map((item, index) => <li key={`${item}-${index}`}>{item}</li>)
                 )}
               </ul>
-              <Button type="submit" className="w-full" disabled={isUploading}>
-                파일 업로드
-              </Button>
+              {fileSelection.length > 0 && (
+                <Button type="submit" className="w-full" disabled={isUploading}>
+                  파일 업로드
+                </Button>
+              )}
             </form>
 
-            <form className="space-y-3 border border-pink-100 p-3" onSubmit={handleFolderUploadSubmit}>
+            <form className="space-y-3 rounded-2xl border border-pink-100 p-4" onSubmit={handleFolderUploadSubmit}>
               <input type="hidden" name="folder" value={currentFolder} />
-              <div
-                className={`border-2 border-dashed p-5 text-center transition ${folderDropActive ? "border-rose-400 bg-rose-50" : "border-pink-200"}`}
-                onDragOver={(event) => handleDragOver(event, "folder")}
-                onDragLeave={(event) => handleDragLeave(event, "folder")}
-                onDrop={(event) => handleDrop(event, "folder")}
-              >
-                <p className="text-sm text-muted-foreground">폴더를 드래그하거나 버튼으로 선택하세요.</p>
-                <div className="mt-4 flex flex-col items-center gap-2">
-                  <Button type="button" size="sm" onClick={() => folderInputRef.current?.click()}>
-                    폴더 선택
-                  </Button>
-                  <p className="text-xs text-muted-foreground">현재 폴더: {currentLabel}</p>
-                </div>
+              <div className="rounded-xl border border-pink-200/80 bg-rose-50/40 px-4 py-5 text-center">
+                <p className="text-sm text-muted-foreground">폴더를 버튼으로 선택하세요.</p>
+                <Button
+                  type="button"
+                  size="sm"
+                  className="mt-4 w-full"
+                  onClick={() => folderInputRef.current?.click()}
+                >
+                  폴더 선택
+                </Button>
+                <p className="mt-2 text-xs text-muted-foreground">현재 폴더: {currentLabel}</p>
                 <Input
                   ref={folderInputRef}
                   type="file"
@@ -900,14 +994,16 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
               </div>
               <ul className="space-y-1 text-xs text-muted-foreground">
                 {folderSelection.length === 0 ? (
-                  <li>선택된 폴더가 없습니다.</li>
+                  <li>선택된 폴더가 없습니다. 폴더를 선택하면 업로드 버튼이 나타납니다.</li>
                 ) : (
                   folderSelection.map((item, index) => <li key={`${item}-${index}`}>{item}</li>)
                 )}
               </ul>
-              <Button type="submit" className="w-full" disabled={isUploading}>
-                폴더 업로드
-              </Button>
+              {folderSelection.length > 0 && (
+                <Button type="submit" className="w-full" disabled={isUploading}>
+                  폴더 업로드
+                </Button>
+              )}
             </form>
           </div>
           {isUploading && (
@@ -1051,6 +1147,110 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
           )}
         </CommandList>
       </CommandDialog>
+
+      <Dialog open={isUploading && uploadItems.length > 0}>
+        <DialogContent className="max-w-sm space-y-4" showCloseButton={false}>
+          <DialogHeader>
+            <DialogTitle>업로드 중...</DialogTitle>
+            <DialogDescription>{uploadItems.length}개의 파일을 처리하고 있습니다.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            {[...uploadItems]
+              .sort((a, b) => {
+                const order: Record<UploadStatus, number> = { uploading: 0, pending: 1, error: 2, success: 3 };
+                return order[a.status] - order[b.status];
+              })
+              .map((item) => (
+                <div key={item.id} className="rounded-xl border border-pink-100 bg-white/90 px-3 py-2">
+                  <div className="flex items-center justify-between text-xs text-muted-foreground">
+                    <span className="font-medium text-foreground">{item.name}</span>
+                    <span>
+                      {item.progress}% · {item.status === "success" ? "완료" : item.status === "error" ? "실패" : "진행 중"}
+                    </span>
+                  </div>
+                  <Progress value={item.progress} className="mt-2 h-2" />
+                </div>
+              ))}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={isMoveDialogOpen}
+        onOpenChange={(open) => {
+          setIsMoveDialogOpen(open);
+          if (!open) {
+            setMoveTarget(null);
+          }
+        }}
+      >
+        <DialogContent className="max-w-lg space-y-4">
+          <DialogHeader>
+            <DialogTitle>파일 이동</DialogTitle>
+            <DialogDescription>선택한 파일을 다른 폴더로 이동합니다.</DialogDescription>
+          </DialogHeader>
+          <form className="space-y-4" onSubmit={handleMoveSubmit}>
+            {isFoldersLoading ? (
+              <div className="rounded-2xl border border-dashed border-pink-200 px-4 py-10 text-center text-sm text-muted-foreground">
+                폴더 목록을 불러오는 중...
+              </div>
+            ) : (
+              <Command className="rounded-2xl border border-pink-200/80 bg-white">
+                <CommandInput placeholder="폴더 검색" />
+                <CommandList>
+                  <CommandEmpty>폴더가 없습니다.</CommandEmpty>
+                  <CommandGroup heading="대상 위치">
+                    <CommandItem
+                      value="__root"
+                      onSelect={() => setMoveTarget("")}
+                      className="justify-between"
+                    >
+                      <div className="flex flex-col text-left">
+                        <span className="text-sm font-semibold text-foreground">루트</span>
+                        <span className="text-xs text-muted-foreground">최상위 경로</span>
+                      </div>
+                      {moveTarget === "" && <CheckIcon className="size-4 text-rose-400" />}
+                    </CommandItem>
+                    {availableFolders.map((folder) => (
+                      <CommandItem
+                        key={`move-folder-${folder}`}
+                        value={folder}
+                        onSelect={() => setMoveTarget(folder)}
+                        className="justify-between"
+                      >
+                        <div className="flex flex-col text-left">
+                          <span className="text-sm font-semibold text-foreground">{folder}</span>
+                          <span className="text-xs text-muted-foreground">폴더</span>
+                        </div>
+                        {moveTarget === folder && <CheckIcon className="size-4 text-rose-400" />}
+                      </CommandItem>
+                    ))}
+                  </CommandGroup>
+                </CommandList>
+              </Command>
+            )}
+            <div className="text-xs text-muted-foreground">
+              현재 위치: {currentLabel} · 이동 대상: {moveTarget === "" ? "루트" : moveTarget || "(선택 필요)"}
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button type="button" variant="ghost" onClick={() => setIsMoveDialogOpen(false)}>
+                취소
+              </Button>
+              <Button
+                type="submit"
+                disabled={
+                  isMutating ||
+                  selectedCount === 0 ||
+                  moveTarget === null ||
+                  moveTarget === (currentFolder || "")
+                }
+              >
+                이동
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
 
       <Dialog
         open={isFolderDialogOpen}
