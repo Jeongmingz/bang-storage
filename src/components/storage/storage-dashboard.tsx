@@ -122,6 +122,7 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
   const [uploadItems, setUploadItems] = useState<UploadItem[]>([]);
   const [fileSelection, setFileSelection] = useState<string[]>([]);
   const [folderSelection, setFolderSelection] = useState<string[]>([]);
+  const [folderSummary, setFolderSummary] = useState<{ files: number; folders: number }>({ files: 0, folders: 0 });
   const [newFolder, setNewFolder] = useState("");
   const [isFolderDialogOpen, setIsFolderDialogOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -190,20 +191,25 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
 
   const handleFolderSelectionChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const rawFiles = Array.from(event.target.files ?? []);
-    setFolderSelection(
-      rawFiles.map((file) => {
-        const relativeFolder = deriveRelativeFolder(currentFolder ?? "", file.webkitRelativePath);
-        const label = relativeFolder ? `${relativeFolder}/${file.name}` : file.name;
-        return `${label} · ${formatSize(file.size)}`;
-      }),
-    );
+    const files = rawFiles.filter((file) => file.size > 0);
+    const folders = new Set<string>();
+
+    rawFiles.forEach((file) => {
+      const relativeFolder = deriveRelativeFolder(currentFolder ?? "", (file as RelativeFile).webkitRelativePath);
+      if (relativeFolder) {
+        folders.add(relativeFolder);
+      }
+    });
+
+    setFolderSelection(files.map((file) => `${file.name} · ${formatSize(file.size)}`));
+    setFolderSummary({ files: files.length, folders: folders.size });
 
     if (quickUploadMode === "folder") {
-      const files = rawFiles.filter((file) => file.size > 0);
       if (files.length > 0) {
         uploadFilesWithMode(files, true).finally(() => {
           setQuickUploadMode(null);
           setFolderSelection([]);
+          setFolderSummary({ files: 0, folders: 0 });
           if (folderInputRef.current) folderInputRef.current.value = "";
         });
       } else {
@@ -320,9 +326,19 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
 
   const handleFolderUploadSubmit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const files = Array.from(folderInputRef.current?.files ?? []).filter((file) => file.size > 0);
+    const allFiles = Array.from(folderInputRef.current?.files ?? []);
+    const files = allFiles.filter((file) => file.size > 0);
+    const folders = new Set<string>();
+    allFiles.forEach((file) => {
+      const relativeFolder = deriveRelativeFolder(currentFolder ?? "", (file as RelativeFile).webkitRelativePath);
+      if (relativeFolder) {
+        folders.add(relativeFolder);
+      }
+    });
+    setFolderSummary({ files: files.length, folders: folders.size });
     uploadFilesWithMode(files, true).then(() => {
       setFolderSelection([]);
+      setFolderSummary({ files: 0, folders: 0 });
       if (folderInputRef.current) folderInputRef.current.value = "";
     });
   };
@@ -992,13 +1008,16 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
                   onChange={handleFolderSelectionChange}
                 />
               </div>
-              <ul className="space-y-1 text-xs text-muted-foreground">
-                {folderSelection.length === 0 ? (
-                  <li>선택된 폴더가 없습니다. 폴더를 선택하면 업로드 버튼이 나타납니다.</li>
+              <div className="rounded-xl border border-dashed border-pink-200 bg-white/70 px-3 py-2 text-xs text-muted-foreground">
+                {folderSummary.files === 0 && folderSummary.folders === 0 ? (
+                  <p>선택된 폴더가 없습니다. 선택하면 파일/폴더 개수를 보여줘요.</p>
                 ) : (
-                  folderSelection.map((item, index) => <li key={`${item}-${index}`}>{item}</li>)
+                  <div className="flex items-center justify-between">
+                    <span>파일 {folderSummary.files}개</span>
+                    <span>폴더 {folderSummary.folders}개</span>
+                  </div>
                 )}
-              </ul>
+              </div>
               {folderSelection.length > 0 && (
                 <Button type="submit" className="w-full" disabled={isUploading}>
                   폴더 업로드
