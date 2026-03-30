@@ -9,7 +9,6 @@ import {
   useTransition,
 } from "react";
 import { useRouter } from "next/navigation";
-import { useEffect } from "react";
 import {
   CheckIcon,
   FolderIcon,
