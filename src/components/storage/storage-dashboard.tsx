@@ -9,6 +9,7 @@ import {
   useTransition,
 } from "react";
 import { useRouter } from "next/navigation";
+import { useEffect } from "react";
 import {
   CheckIcon,
   FolderIcon,
@@ -388,13 +389,29 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
     [getCachedUrl, handleUnauthorized],
   );
 
-  const handleGenerateLink = (file: StorageFile, copyToClipboard = false) => {
+  const handleGenerateLink = (file: StorageFile, copyToClipboard = false, forceDownload = false) => {
     startMutate(() => {
       fetchDownloadUrl(file).then(async (url) => {
         if (!url) return;
         if (copyToClipboard) {
           await navigator.clipboard.writeText(url);
           toast.success("링크를 복사했습니다.");
+        } else if (forceDownload) {
+          try {
+            const response = await fetch(url);
+            const blob = await response.blob();
+            const blobUrl = URL.createObjectURL(blob);
+            const anchor = document.createElement("a");
+            anchor.href = blobUrl;
+            anchor.download = file.name;
+            document.body.appendChild(anchor);
+            anchor.click();
+            document.body.removeChild(anchor);
+            URL.revokeObjectURL(blobUrl);
+            toast.success("다운로드를 시작했어요.");
+          } catch (error) {
+            toast.error("다운로드 중 문제가 발생했습니다.");
+          }
         } else {
           window.open(url, "_blank");
         }
@@ -685,6 +702,10 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
       body.style.overflow = previousBody;
     };
   }, [isCommandOpen, isFolderDialogOpen, isMoveDialogOpen, previewFile]);
+
+  useEffect(() => {
+    document.title = `방폴더 - ${currentLabel}`;
+  }, [currentLabel]);
 
   const loadFolders = useCallback(() => {
     setIsFoldersLoading(true);
@@ -1313,7 +1334,7 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
       <Dialog open={Boolean(previewFile)} onOpenChange={(open) => (!open ? setPreviewFile(null) : null)}>
         <DialogContent className="max-w-md space-y-4 sm:max-w-lg" showCloseButton>
           <DialogHeader className="space-y-1 pr-6">
-            <DialogTitle>{previewFile?.name}</DialogTitle>
+            <DialogTitle>방폴더 - {previewFile?.name}</DialogTitle>
             <DialogDescription>
               {previewFile ? `${formatSize(previewFile.size)} · ${previewFile.contentType ?? "파일"}` : ""}
             </DialogDescription>
@@ -1361,9 +1382,9 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
           </div>
           {previewFile && (
             <div className="flex flex-col gap-2 border-t border-rose-100/60 pt-4 sm:flex-row sm:justify-end">
-              <Button size="sm" variant="secondary" onClick={() => handleGenerateLink(previewFile)}>
-                다운로드
-              </Button>
+                <Button size="sm" variant="secondary" onClick={() => handleGenerateLink(previewFile, false, true)}>
+                  다운로드
+                </Button>
               <Button size="sm" variant="ghost" onClick={() => handleGenerateLink(previewFile, true)}>
                 링크 복사
               </Button>
