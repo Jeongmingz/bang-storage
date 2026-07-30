@@ -12,6 +12,7 @@ import {
   createFolder,
   createSignedDownloadUrl,
   deleteFile,
+  deleteFiles,
   deleteFolder,
   getBucketLabel,
   listAllFolders,
@@ -19,6 +20,8 @@ import {
   moveObject,
   prepareUploadTarget,
   renameObject,
+  searchFiles,
+  type SearchResult,
 } from "@/lib/storage";
 
 export type ActionResult<T = Record<string, unknown>> =
@@ -68,6 +71,7 @@ export async function createUploadUrl(formData: FormData): Promise<ActionResult<
   const fileName = formData.get("fileName");
   const folder = formData.get("folder");
   const contentType = formData.get("contentType");
+  const fileSize = formData.get("fileSize");
 
   if (typeof fileName !== "string" || fileName.length === 0) {
     return { success: false, message: "파일 이름이 필요합니다." };
@@ -78,6 +82,7 @@ export async function createUploadUrl(formData: FormData): Promise<ActionResult<
       fileName,
       folder: typeof folder === "string" && folder.length > 0 ? folder : undefined,
       contentType: typeof contentType === "string" ? contentType : undefined,
+      fileSize: typeof fileSize === "string" && fileSize.length > 0 ? Number(fileSize) : undefined,
     });
     return { success: true, uploadUrl: target.uploadUrl, path: target.path, publicUrl: target.publicUrl };
   } catch (error) {
@@ -118,9 +123,7 @@ export async function deleteFilesAction(paths: string[], currentFolder?: string)
   const uniquePaths = [...new Set(paths)].filter((path) => Boolean(path));
 
   try {
-    for (const path of uniquePaths) {
-      await deleteFile(path);
-    }
+    await deleteFiles(uniquePaths);
   } catch (error) {
     return {
       success: false,
@@ -247,6 +250,23 @@ export async function listFoldersAction(): Promise<ActionResult<{ folders: strin
     return {
       success: false,
       message: error instanceof Error ? error.message : "폴더 목록을 불러오지 못했습니다.",
+    };
+  }
+}
+
+export async function searchFilesAction(query: string): Promise<ActionResult<{ results: SearchResult[] }>> {
+  const auth = await ensureAuth();
+  if (auth !== true) {
+    return auth as ActionResult<{ results: SearchResult[] }>;
+  }
+
+  try {
+    const results = await searchFiles(query);
+    return { success: true, results };
+  } catch (error) {
+    return {
+      success: false,
+      message: error instanceof Error ? error.message : "검색에 실패했습니다.",
     };
   }
 }

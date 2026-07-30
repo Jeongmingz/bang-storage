@@ -75,6 +75,58 @@ function decodeSegment(value: string) {
   }
 }
 
+// Serializes concurrent operations that target the same path key so two
+// requests can't both observe "not found" and pick the same candidate name.
+const pathLocks = new Map<string, Promise<unknown>>();
+
+function withPathLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
+  const prior = pathLocks.get(key) ?? Promise.resolve();
+  const run = prior.then(fn, fn);
+  const tracked = run.catch(() => {});
+  pathLocks.set(key, tracked);
+  run.finally(() => {
+    if (pathLocks.get(key) === tracked) {
+      pathLocks.delete(key);
+    }
+  });
+  return run;
+}
+
+// Tracks candidate paths that were just handed out as upload targets but may
+// not exist in R2 yet (the client PUTs asynchronously after the signed URL
+// is issued), so a second concurrent request for the same name doesn't also
+// see a 404 and collide with it.
+const reservedPaths = new Map<string, number>();
+const DEFAULT_RESERVATION_TTL_MS = 5 * 60 * 1000;
+
+function isReserved(path: string) {
+  const expiresAt = reservedPaths.get(path);
+  if (expiresAt === undefined) return false;
+  if (expiresAt < Date.now()) {
+    reservedPaths.delete(path);
+    return false;
+  }
+  return true;
+}
+
+function reservePath(path: string, ttlMs: number = DEFAULT_RESERVATION_TTL_MS) {
+  reservedPaths.set(path, Date.now() + ttlMs);
+}
+
+// Single-PUT limit for S3-compatible storage (R2 follows the same 5GiB cap as S3).
+export const MAX_UPLOAD_SIZE_BYTES = 5 * 1024 * 1024 * 1024;
+
+const MIN_UPLOAD_EXPIRY_SECONDS = 60 * 5;
+const MAX_UPLOAD_EXPIRY_SECONDS = 60 * 60;
+
+// Scales the presigned URL's lifetime with file size so large uploads on slow
+// connections don't have their signature expire mid-transfer.
+function computeUploadExpirySeconds(fileSize?: number) {
+  if (!fileSize || fileSize <= 0) return MIN_UPLOAD_EXPIRY_SECONDS;
+  const estimatedSeconds = Math.ceil(fileSize / (1024 * 1024)) * 2; // ~2s per MB, generous for slow uplinks
+  return Math.min(MAX_UPLOAD_EXPIRY_SECONDS, Math.max(MIN_UPLOAD_EXPIRY_SECONDS, estimatedSeconds));
+}
+
 export async function listEntries(path?: string): Promise<StorageSnapshot> {
   const prefix = normalizePath(path);
   const keyPrefix = prefix ? `${prefix}/` : undefined;
@@ -141,6 +193,24 @@ export async function deleteFile(path: string) {
   );
 }
 
+const DELETE_BATCH_SIZE = 1000; // S3/R2 DeleteObjects limit per request
+
+export async function deleteFiles(paths: string[]) {
+  const keys = [...new Set(paths)].filter(Boolean);
+  if (keys.length === 0) return;
+
+  const s3 = getClient();
+  for (let index = 0; index < keys.length; index += DELETE_BATCH_SIZE) {
+    const chunk = keys.slice(index, index + DELETE_BATCH_SIZE);
+    await s3.send(
+      new DeleteObjectsCommand({
+        Bucket: BUCKET,
+        Delete: { Objects: chunk.map((Key) => ({ Key })) },
+      }),
+    );
+  }
+}
+
 export async function deleteFolder(path: string) {
   const prefix = normalizePath(path);
   if (!prefix) throw new Error("루트는 삭제할 수 없습니다.");
@@ -164,14 +234,7 @@ export async function deleteFolder(path: string) {
     ContinuationToken = NextContinuationToken;
   } while (ContinuationToken);
 
-  if (keys.length === 0) return;
-
-  await s3.send(
-    new DeleteObjectsCommand({
-      Bucket: BUCKET,
-      Delete: { Objects: keys.map((Key) => ({ Key })) },
-    }),
-  );
+  await deleteFiles(keys);
 }
 
 export async function createFolder(options: { name: string; parent?: string }) {
@@ -226,43 +289,112 @@ export async function listAllFolders() {
   return Array.from(folders).sort((a, b) => a.localeCompare(b));
 }
 
+export type SearchResult = StorageFile & { folder: string };
+
+const SEARCH_RESULT_LIMIT = 200;
+
+export async function searchFiles(query: string): Promise<SearchResult[]> {
+  const normalizedQuery = query.trim().toLowerCase();
+  if (!normalizedQuery) return [];
+
+  const s3 = getClient();
+  let ContinuationToken: string | undefined;
+  const results: SearchResult[] = [];
+
+  do {
+    const { Contents = [], NextContinuationToken } = await s3.send(
+      new ListObjectsV2Command({
+        Bucket: BUCKET,
+        ContinuationToken,
+      }),
+    );
+
+    for (const item of Contents) {
+      if (!item.Key || item.Key.endsWith("/.keep")) continue;
+      const segments = item.Key.split("/").filter(Boolean);
+      const name = decodeSegment(segments[segments.length - 1] ?? "");
+      if (!name.toLowerCase().includes(normalizedQuery)) continue;
+
+      const folder = segments
+        .slice(0, -1)
+        .map((segment) => decodeSegment(segment))
+        .join("/");
+
+      results.push({
+        id: item.Key,
+        name,
+        path: item.Key,
+        folder,
+        size: Number(item.Size ?? 0),
+        createdAt: item.LastModified?.toISOString() ?? new Date().toISOString(),
+        updatedAt: item.LastModified?.toISOString() ?? new Date().toISOString(),
+        publicUrl: `${(ENDPOINT ?? "").replace(/\/$/, "")}/${BUCKET ?? ""}/${encodePathForUrl(item.Key)}`,
+      });
+
+      if (results.length >= SEARCH_RESULT_LIMIT) return results;
+    }
+
+    ContinuationToken = NextContinuationToken;
+  } while (ContinuationToken);
+
+  return results;
+}
+
 export async function prepareUploadTarget(options: {
   fileName: string;
   folder?: string;
   contentType?: string;
+  fileSize?: number;
   expiresIn?: number;
 }) {
-  const { fileName, folder, contentType, expiresIn = 60 * 5 } = options;
+  const { fileName, folder, contentType, fileSize, expiresIn } = options;
+
+  if (fileSize !== undefined && fileSize > MAX_UPLOAD_SIZE_BYTES) {
+    throw new Error("파일 크기가 5GB를 초과합니다.");
+  }
+
+  const resolvedExpiresIn = expiresIn ?? computeUploadExpirySeconds(fileSize);
   const folderPrefix = normalizePath(folder);
   const extensionMatch = fileName.match(/(.*)(\.[^.]*)$/);
   const nameWithoutExt = extensionMatch ? extensionMatch[1] : fileName;
   const ext = extensionMatch ? extensionMatch[2] : "";
-  let candidatePath = folderPrefix ? `${folderPrefix}/${fileName}` : fileName;
-  let counter = 1;
+  const lockKey = folderPrefix ? `${folderPrefix}/${fileName}` : fileName;
 
   const s3 = getClient();
 
-  while (true) {
-    try {
-      await s3.send(new HeadObjectCommand({ Bucket: BUCKET, Key: candidatePath }));
-      const nextName = `${nameWithoutExt}(${counter})${ext}`;
-      candidatePath = folderPrefix ? `${folderPrefix}/${nextName}` : nextName;
-      counter += 1;
-    } catch (error) {
-      const status = (error as { $metadata?: { httpStatusCode?: number } })?.$metadata?.httpStatusCode;
-      if (status === 404) {
-        break;
+  const candidatePath = await withPathLock(lockKey, async () => {
+    let candidate = folderPrefix ? `${folderPrefix}/${fileName}` : fileName;
+    let counter = 1;
+
+    while (true) {
+      if (!isReserved(candidate)) {
+        try {
+          await s3.send(new HeadObjectCommand({ Bucket: BUCKET, Key: candidate }));
+        } catch (error) {
+          const status = (error as { $metadata?: { httpStatusCode?: number } })?.$metadata?.httpStatusCode;
+          if (status === 404) {
+            break;
+          }
+          throw error;
+        }
       }
-      throw error;
+      const nextName = `${nameWithoutExt}(${counter})${ext}`;
+      candidate = folderPrefix ? `${folderPrefix}/${nextName}` : nextName;
+      counter += 1;
     }
-  }
+
+    // Keep the reservation alive at least as long as the signed URL, plus
+    // a buffer, so the name can't be re-claimed while the PUT is in flight.
+    reservePath(candidate, (resolvedExpiresIn + 60) * 1000);
+    return candidate;
+  });
 
   const command = new PutObjectCommand({
     Bucket: BUCKET,
     Key: candidatePath,
     ContentType: contentType,
   });
-  const uploadUrl = await getSignedUrl(s3, command, { expiresIn });
+  const uploadUrl = await getSignedUrl(s3, command, { expiresIn: resolvedExpiresIn });
   const publicUrl = `${(ENDPOINT ?? "").replace(/\/$/, "")}/${BUCKET ?? ""}/${encodePathForUrl(candidatePath)}`;
 
   return {
@@ -341,7 +473,6 @@ export async function moveObject(options: { path: string; targetFolder?: string 
   const segments = path.split("/").filter(Boolean);
   if (segments.length === 0) throw new Error("잘못된 경로입니다.");
   const fileName = segments.pop()!;
-  const sourceFolder = segments.join("/");
   const destinationFolder = normalizedTarget;
 
   const originalPath = path;

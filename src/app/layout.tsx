@@ -11,7 +11,7 @@ const geistMono = GeistMono;
 
 export const metadata: Metadata = {
   title: "Bang Storage Console",
-  description: "Supabase 기반 2인 전용 스토리지 제어판",
+  description: "Cloudflare R2 기반 2인 전용 스토리지 제어판",
 };
 
 export default function RootLayout({
