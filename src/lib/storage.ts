@@ -75,6 +75,44 @@ function decodeSegment(value: string) {
   }
 }
 
+// Serializes concurrent operations that target the same path key so two
+// requests can't both observe "not found" and pick the same candidate name.
+const pathLocks = new Map<string, Promise<unknown>>();
+
+function withPathLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
+  const prior = pathLocks.get(key) ?? Promise.resolve();
+  const run = prior.then(fn, fn);
+  const tracked = run.catch(() => {});
+  pathLocks.set(key, tracked);
+  run.finally(() => {
+    if (pathLocks.get(key) === tracked) {
+      pathLocks.delete(key);
+    }
+  });
+  return run;
+}
+
+// Tracks candidate paths that were just handed out as upload targets but may
+// not exist in R2 yet (the client PUTs asynchronously after the signed URL
+// is issued), so a second concurrent request for the same name doesn't also
+// see a 404 and collide with it.
+const reservedPaths = new Map<string, number>();
+const RESERVATION_TTL_MS = 5 * 60 * 1000;
+
+function isReserved(path: string) {
+  const expiresAt = reservedPaths.get(path);
+  if (expiresAt === undefined) return false;
+  if (expiresAt < Date.now()) {
+    reservedPaths.delete(path);
+    return false;
+  }
+  return true;
+}
+
+function reservePath(path: string) {
+  reservedPaths.set(path, Date.now() + RESERVATION_TTL_MS);
+}
+
 export async function listEntries(path?: string): Promise<StorageSnapshot> {
   const prefix = normalizePath(path);
   const keyPrefix = prefix ? `${prefix}/` : undefined;
@@ -141,6 +179,24 @@ export async function deleteFile(path: string) {
   );
 }
 
+const DELETE_BATCH_SIZE = 1000; // S3/R2 DeleteObjects limit per request
+
+export async function deleteFiles(paths: string[]) {
+  const keys = [...new Set(paths)].filter(Boolean);
+  if (keys.length === 0) return;
+
+  const s3 = getClient();
+  for (let index = 0; index < keys.length; index += DELETE_BATCH_SIZE) {
+    const chunk = keys.slice(index, index + DELETE_BATCH_SIZE);
+    await s3.send(
+      new DeleteObjectsCommand({
+        Bucket: BUCKET,
+        Delete: { Objects: chunk.map((Key) => ({ Key })) },
+      }),
+    );
+  }
+}
+
 export async function deleteFolder(path: string) {
   const prefix = normalizePath(path);
   if (!prefix) throw new Error("루트는 삭제할 수 없습니다.");
@@ -164,14 +220,7 @@ export async function deleteFolder(path: string) {
     ContinuationToken = NextContinuationToken;
   } while (ContinuationToken);
 
-  if (keys.length === 0) return;
-
-  await s3.send(
-    new DeleteObjectsCommand({
-      Bucket: BUCKET,
-      Delete: { Objects: keys.map((Key) => ({ Key })) },
-    }),
-  );
+  await deleteFiles(keys);
 }
 
 export async function createFolder(options: { name: string; parent?: string }) {
@@ -237,25 +286,34 @@ export async function prepareUploadTarget(options: {
   const extensionMatch = fileName.match(/(.*)(\.[^.]*)$/);
   const nameWithoutExt = extensionMatch ? extensionMatch[1] : fileName;
   const ext = extensionMatch ? extensionMatch[2] : "";
-  let candidatePath = folderPrefix ? `${folderPrefix}/${fileName}` : fileName;
-  let counter = 1;
+  const lockKey = folderPrefix ? `${folderPrefix}/${fileName}` : fileName;
 
   const s3 = getClient();
 
-  while (true) {
-    try {
-      await s3.send(new HeadObjectCommand({ Bucket: BUCKET, Key: candidatePath }));
-      const nextName = `${nameWithoutExt}(${counter})${ext}`;
-      candidatePath = folderPrefix ? `${folderPrefix}/${nextName}` : nextName;
-      counter += 1;
-    } catch (error) {
-      const status = (error as { $metadata?: { httpStatusCode?: number } })?.$metadata?.httpStatusCode;
-      if (status === 404) {
-        break;
+  const candidatePath = await withPathLock(lockKey, async () => {
+    let candidate = folderPrefix ? `${folderPrefix}/${fileName}` : fileName;
+    let counter = 1;
+
+    while (true) {
+      if (!isReserved(candidate)) {
+        try {
+          await s3.send(new HeadObjectCommand({ Bucket: BUCKET, Key: candidate }));
+        } catch (error) {
+          const status = (error as { $metadata?: { httpStatusCode?: number } })?.$metadata?.httpStatusCode;
+          if (status === 404) {
+            break;
+          }
+          throw error;
+        }
       }
-      throw error;
+      const nextName = `${nameWithoutExt}(${counter})${ext}`;
+      candidate = folderPrefix ? `${folderPrefix}/${nextName}` : nextName;
+      counter += 1;
     }
-  }
+
+    reservePath(candidate);
+    return candidate;
+  });
 
   const command = new PutObjectCommand({
     Bucket: BUCKET,

@@ -12,6 +12,7 @@ import {
   createFolder,
   createSignedDownloadUrl,
   deleteFile,
+  deleteFiles,
   deleteFolder,
   getBucketLabel,
   listAllFolders,
@@ -118,9 +119,7 @@ export async function deleteFilesAction(paths: string[], currentFolder?: string)
   const uniquePaths = [...new Set(paths)].filter((path) => Boolean(path));
 
   try {
-    for (const path of uniquePaths) {
-      await deleteFile(path);
-    }
+    await deleteFiles(uniquePaths);
   } catch (error) {
     return {
       success: false,

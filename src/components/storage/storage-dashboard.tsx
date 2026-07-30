@@ -106,6 +106,32 @@ function formatRelative(date: string) {
 }
 
 const DEFAULT_FOLDER = "";
+const MAX_CONCURRENT_UPLOADS = 4;
+
+async function runWithConcurrency<T>(
+  items: T[],
+  worker: (item: T) => Promise<void>,
+  limit: number,
+): Promise<PromiseSettledResult<void>[]> {
+  const results: PromiseSettledResult<void>[] = new Array(items.length);
+  let cursor = 0;
+
+  const runNext = async () => {
+    while (cursor < items.length) {
+      const index = cursor;
+      cursor += 1;
+      try {
+        await worker(items[index]);
+        results[index] = { status: "fulfilled", value: undefined };
+      } catch (reason) {
+        results[index] = { status: "rejected", reason };
+      }
+    }
+  };
+
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, runNext));
+  return results;
+}
 
 export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
   const router = useRouter();
@@ -291,7 +317,7 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
     };
 
     try {
-      const uploadResults = await Promise.allSettled(uploadDescriptor.map((entry) => uploadSingleFile(entry)));
+      const uploadResults = await runWithConcurrency(uploadDescriptor, uploadSingleFile, MAX_CONCURRENT_UPLOADS);
       const hasFailure = uploadResults.some((result) => result.status === "rejected");
       const refreshed = await refreshFiles(currentFolder);
       if (refreshed.success && refreshed.snapshot) {
@@ -426,14 +452,6 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
   useEffect(() => {
     setSelectedFileIds(new Set());
   }, [currentFolder]);
-
-  useEffect(() => {
-    const missing = files.filter((file) => getPreviewType(file) && !getCachedUrl(file));
-    if (missing.length === 0) return;
-    missing.forEach((file) => {
-      fetchDownloadUrl(file);
-    });
-  }, [files, getCachedUrl, fetchDownloadUrl]);
 
   const getPreviewUrl = (file: StorageFile) => {
     if (!getPreviewType(file)) return null;
@@ -880,8 +898,6 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
                           );
                         }
                         const file = item.file;
-                        const previewType = getPreviewType(file);
-                        const previewUrl = previewType ? getPreviewUrl(file) : null;
                         return (
                           <TableRow
                             key={file.id}
@@ -900,37 +916,11 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
                             </TableCell>
                             <TableCell>
                               <div className="flex items-center gap-3">
-                                <div className="h-12 w-12 overflow-hidden border border-pink-100 bg-white">
-                                  {previewType === "image" && previewUrl ? (
-                                    // eslint-disable-next-line @next/next/no-img-element
-                                    <img
-                                      src={previewUrl ?? undefined}
-                                      alt={file.name}
-                                      loading="lazy"
-                                      className="h-full w-full object-cover"
-                                    />
-                                  ) : previewType === "video" && previewUrl ? (
-                                    <video
-                                      src={previewUrl}
-                                      className="h-full w-full object-cover"
-                                      muted
-                                      playsInline
-                                      loop
-                                      preload="metadata"
-                                    />
-                                  ) : previewType ? (
-                                    <div className="flex h-full w-full items-center justify-center text-[10px] text-muted-foreground">
-                                      로딩 중...
-                                    </div>
-                                  ) : (
-                                    <div className="flex h-full w-full items-center justify-center">
-                                      <FileIcon
-                                        extension={getExtension(file.name)}
-                                        {...(defaultStyles[getExtension(file.name)] || defaultStyles.default)}
-                                      />
-                                    </div>
-                                  )}
-                                </div>
+                                <FileThumbnail
+                                  file={file}
+                                  getCachedUrl={getCachedUrl}
+                                  fetchDownloadUrl={fetchDownloadUrl}
+                                />
                                 <div className="flex flex-col">
                                   <span className="text-sm font-semibold text-foreground">{file.name}</span>
                                 </div>
@@ -1465,4 +1455,57 @@ function getPreviewType(file: StorageFile): PreviewKind | null {
   if (IMAGE_PREVIEW_EXTENSIONS.includes(extension)) return "image";
   if (VIDEO_PREVIEW_EXTENSIONS.includes(extension)) return "video";
   return null;
+}
+
+function FileThumbnail({
+  file,
+  getCachedUrl,
+  fetchDownloadUrl,
+}: {
+  file: StorageFile;
+  getCachedUrl: (file: StorageFile) => string | null;
+  fetchDownloadUrl: (file: StorageFile) => Promise<string | null>;
+}) {
+  const previewType = getPreviewType(file);
+  const cachedUrl = previewType ? getCachedUrl(file) : null;
+  const nodeRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!previewType || cachedUrl) return;
+    const node = nodeRef.current;
+    if (!node) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (!entries.some((entry) => entry.isIntersecting)) return;
+        observer.disconnect();
+        fetchDownloadUrl(file);
+      },
+      { rootMargin: "200px" },
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [file, previewType, cachedUrl, fetchDownloadUrl]);
+
+  return (
+    <div ref={nodeRef} className="h-12 w-12 overflow-hidden border border-pink-100 bg-white">
+      {previewType === "image" && cachedUrl ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={cachedUrl} alt={file.name} loading="lazy" className="h-full w-full object-cover" />
+      ) : previewType === "video" && cachedUrl ? (
+        <video src={cachedUrl} className="h-full w-full object-cover" muted playsInline loop preload="metadata" />
+      ) : previewType ? (
+        <div className="flex h-full w-full items-center justify-center text-[10px] text-muted-foreground">
+          로딩 중...
+        </div>
+      ) : (
+        <div className="flex h-full w-full items-center justify-center">
+          <FileIcon
+            extension={getExtension(file.name)}
+            {...(defaultStyles[getExtension(file.name)] || defaultStyles.default)}
+          />
+        </div>
+      )}
+    </div>
+  );
 }
