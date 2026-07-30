@@ -97,7 +97,7 @@ function withPathLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
 // is issued), so a second concurrent request for the same name doesn't also
 // see a 404 and collide with it.
 const reservedPaths = new Map<string, number>();
-const RESERVATION_TTL_MS = 5 * 60 * 1000;
+const DEFAULT_RESERVATION_TTL_MS = 5 * 60 * 1000;
 
 function isReserved(path: string) {
   const expiresAt = reservedPaths.get(path);
@@ -109,8 +109,22 @@ function isReserved(path: string) {
   return true;
 }
 
-function reservePath(path: string) {
-  reservedPaths.set(path, Date.now() + RESERVATION_TTL_MS);
+function reservePath(path: string, ttlMs: number = DEFAULT_RESERVATION_TTL_MS) {
+  reservedPaths.set(path, Date.now() + ttlMs);
+}
+
+// Single-PUT limit for S3-compatible storage (R2 follows the same 5GiB cap as S3).
+export const MAX_UPLOAD_SIZE_BYTES = 5 * 1024 * 1024 * 1024;
+
+const MIN_UPLOAD_EXPIRY_SECONDS = 60 * 5;
+const MAX_UPLOAD_EXPIRY_SECONDS = 60 * 60;
+
+// Scales the presigned URL's lifetime with file size so large uploads on slow
+// connections don't have their signature expire mid-transfer.
+function computeUploadExpirySeconds(fileSize?: number) {
+  if (!fileSize || fileSize <= 0) return MIN_UPLOAD_EXPIRY_SECONDS;
+  const estimatedSeconds = Math.ceil(fileSize / (1024 * 1024)) * 2; // ~2s per MB, generous for slow uplinks
+  return Math.min(MAX_UPLOAD_EXPIRY_SECONDS, Math.max(MIN_UPLOAD_EXPIRY_SECONDS, estimatedSeconds));
 }
 
 export async function listEntries(path?: string): Promise<StorageSnapshot> {
@@ -275,13 +289,71 @@ export async function listAllFolders() {
   return Array.from(folders).sort((a, b) => a.localeCompare(b));
 }
 
+export type SearchResult = StorageFile & { folder: string };
+
+const SEARCH_RESULT_LIMIT = 200;
+
+export async function searchFiles(query: string): Promise<SearchResult[]> {
+  const normalizedQuery = query.trim().toLowerCase();
+  if (!normalizedQuery) return [];
+
+  const s3 = getClient();
+  let ContinuationToken: string | undefined;
+  const results: SearchResult[] = [];
+
+  do {
+    const { Contents = [], NextContinuationToken } = await s3.send(
+      new ListObjectsV2Command({
+        Bucket: BUCKET,
+        ContinuationToken,
+      }),
+    );
+
+    for (const item of Contents) {
+      if (!item.Key || item.Key.endsWith("/.keep")) continue;
+      const segments = item.Key.split("/").filter(Boolean);
+      const name = decodeSegment(segments[segments.length - 1] ?? "");
+      if (!name.toLowerCase().includes(normalizedQuery)) continue;
+
+      const folder = segments
+        .slice(0, -1)
+        .map((segment) => decodeSegment(segment))
+        .join("/");
+
+      results.push({
+        id: item.Key,
+        name,
+        path: item.Key,
+        folder,
+        size: Number(item.Size ?? 0),
+        createdAt: item.LastModified?.toISOString() ?? new Date().toISOString(),
+        updatedAt: item.LastModified?.toISOString() ?? new Date().toISOString(),
+        publicUrl: `${(ENDPOINT ?? "").replace(/\/$/, "")}/${BUCKET ?? ""}/${encodePathForUrl(item.Key)}`,
+      });
+
+      if (results.length >= SEARCH_RESULT_LIMIT) return results;
+    }
+
+    ContinuationToken = NextContinuationToken;
+  } while (ContinuationToken);
+
+  return results;
+}
+
 export async function prepareUploadTarget(options: {
   fileName: string;
   folder?: string;
   contentType?: string;
+  fileSize?: number;
   expiresIn?: number;
 }) {
-  const { fileName, folder, contentType, expiresIn = 60 * 5 } = options;
+  const { fileName, folder, contentType, fileSize, expiresIn } = options;
+
+  if (fileSize !== undefined && fileSize > MAX_UPLOAD_SIZE_BYTES) {
+    throw new Error("파일 크기가 5GB를 초과합니다.");
+  }
+
+  const resolvedExpiresIn = expiresIn ?? computeUploadExpirySeconds(fileSize);
   const folderPrefix = normalizePath(folder);
   const extensionMatch = fileName.match(/(.*)(\.[^.]*)$/);
   const nameWithoutExt = extensionMatch ? extensionMatch[1] : fileName;
@@ -311,7 +383,9 @@ export async function prepareUploadTarget(options: {
       counter += 1;
     }
 
-    reservePath(candidate);
+    // Keep the reservation alive at least as long as the signed URL, plus
+    // a buffer, so the name can't be re-claimed while the PUT is in flight.
+    reservePath(candidate, (resolvedExpiresIn + 60) * 1000);
     return candidate;
   });
 
@@ -320,7 +394,7 @@ export async function prepareUploadTarget(options: {
     Key: candidatePath,
     ContentType: contentType,
   });
-  const uploadUrl = await getSignedUrl(s3, command, { expiresIn });
+  const uploadUrl = await getSignedUrl(s3, command, { expiresIn: resolvedExpiresIn });
   const publicUrl = `${(ENDPOINT ?? "").replace(/\/$/, "")}/${BUCKET ?? ""}/${encodePathForUrl(candidatePath)}`;
 
   return {
