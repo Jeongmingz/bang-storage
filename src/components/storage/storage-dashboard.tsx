@@ -15,7 +15,6 @@ import {
   FolderPlusIcon,
   LogOutIcon,
   MoreHorizontalIcon,
-  RefreshCcwIcon,
   SearchIcon,
   Trash2Icon,
   UploadCloudIcon,
@@ -111,11 +110,11 @@ const DEFAULT_FOLDER = "";
 export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
   const router = useRouter();
   const [snapshot, setSnapshot] = useState(initialSnapshot);
-  const [bucket, setBucket] = useState(bucketName);
+  const [, setBucket] = useState(bucketName);
   const [currentFolder, setCurrentFolder] = useState(initialSnapshot.path ?? DEFAULT_FOLDER);
   const [isUploading, setIsUploading] = useState(false);
   const [isMutating, startMutate] = useTransition();
-  const [isRefreshing, startRefreshing] = useTransition();
+  const [, startRefreshing] = useTransition();
   const [progress, setProgress] = useState(0);
   type UploadStatus = "pending" | "uploading" | "success" | "error";
   type UploadItem = { id: string; name: string; size: number; progress: number; status: UploadStatus };
@@ -408,7 +407,7 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
             document.body.removeChild(anchor);
             URL.revokeObjectURL(blobUrl);
             toast.success("다운로드를 시작했어요.");
-          } catch (error) {
+          } catch {
             toast.error("다운로드 중 문제가 발생했습니다.");
           }
         } else {
@@ -638,8 +637,11 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
 
   const isRoot = !currentFolder;
   const currentLabel = currentFolder || "루트";
-  const composePath = (folderName: string) =>
-    (currentFolder ? `${currentFolder}/${folderName}` : folderName).replace(/\/+/, "/");
+  const composePath = useCallback(
+    (folderName: string) =>
+      (currentFolder ? `${currentFolder}/${folderName}` : folderName).replace(/\/+/, "/"),
+    [currentFolder],
+  );
   const parentPath = useMemo(() => {
     if (!currentFolder) return "";
     const segments = currentFolder.split("/").filter(Boolean);
@@ -663,7 +665,7 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
       file,
     }));
     return [...parentItem, ...folderItems, ...fileItems];
-  }, [visibleFolders, visibleFiles, currentFolder, isRoot, parentPath]);
+  }, [visibleFolders, visibleFiles, isRoot, parentPath, composePath]);
 
   const showEmptyState = visibleFolders.length === 0 && visibleFiles.length === 0;
 
@@ -724,17 +726,6 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
         setIsFoldersLoading(false);
       });
   }, []);
-
-  const breadcrumbItems = useMemo(() => {
-    const segments = currentFolder ? currentFolder.split("/").filter(Boolean) : [];
-    const items = [{ label: "전체", path: "" }];
-    let path = "";
-    segments.forEach((segment) => {
-      path = path ? `${path}/${segment}` : segment;
-      items.push({ label: segment, path });
-    });
-    return items;
-  }, [currentFolder]);
 
   return (
     <div className="flex h-screen flex-col gap-6 overflow-hidden bg-gradient-to-br from-pink-50 via-rose-50 to-white px-4 py-6 sm:px-6">

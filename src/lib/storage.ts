@@ -341,7 +341,6 @@ export async function moveObject(options: { path: string; targetFolder?: string 
   const segments = path.split("/").filter(Boolean);
   if (segments.length === 0) throw new Error("잘못된 경로입니다.");
   const fileName = segments.pop()!;
-  const sourceFolder = segments.join("/");
   const destinationFolder = normalizedTarget;
 
   const originalPath = path;
