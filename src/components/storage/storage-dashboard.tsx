@@ -34,6 +34,7 @@ import {
   renameFileAction,
 } from "@/app/actions";
 import type { StorageFile, StorageSnapshot } from "@/lib/storage";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -138,6 +139,9 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
   const [snapshot, setSnapshot] = useState(initialSnapshot);
   const [, setBucket] = useState(bucketName);
   const [currentFolder, setCurrentFolder] = useState(initialSnapshot.path ?? DEFAULT_FOLDER);
+  const [rootFolders, setRootFolders] = useState<string[]>(
+    initialSnapshot.path ? [] : initialSnapshot.folders,
+  );
   const [isUploading, setIsUploading] = useState(false);
   const [isMutating, startMutate] = useTransition();
   const [, startRefreshing] = useTransition();
@@ -191,6 +195,9 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
   const handleSnapshotUpdate = (next: StorageSnapshot, nextBucket?: string) => {
     setSnapshot(next);
     setCurrentFolder(next.path ?? DEFAULT_FOLDER);
+    if (!next.path) {
+      setRootFolders(next.folders);
+    }
     if (nextBucket) {
       setBucket(nextBucket);
     }
@@ -667,6 +674,16 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
     return segments.join("/");
   }, [currentFolder]);
 
+  const breadcrumbSegments = useMemo(() => {
+    if (!currentFolder) return [];
+    const segments = currentFolder.split("/").filter(Boolean);
+    let path = "";
+    return segments.map((segment) => {
+      path = path ? `${path}/${segment}` : segment;
+      return { label: segment, path };
+    });
+  }, [currentFolder]);
+
   const tableItems = useMemo<TableItem[]>(() => {
     const parentItem = !isRoot
       ? [{ kind: "folder" as const, id: "folder-parent", name: "..", path: parentPath, isParent: true }]
@@ -746,64 +763,116 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
   }, []);
 
   return (
-    <div className="flex h-screen flex-col gap-4 overflow-hidden bg-background px-4 py-6 sm:px-6">
-      <div className="flex flex-1 min-h-0 flex-col gap-4 overflow-hidden">
-        <section className="border border-border bg-card p-4">
-          <div className="flex flex-row gap-3 items-center justify-between">
-            <p className="text-sm font-semibold text-foreground">Bang Storage</p>
-            <Button variant="ghost" size="icon" onClick={handleLogout} aria-label="로그아웃">
-              <LogOutIcon className="size-4" />
+    <div className="flex h-screen overflow-hidden bg-background">
+      <aside className="hidden w-56 flex-shrink-0 flex-col border-r border-border bg-sidebar sm:flex">
+        <div className="flex items-center gap-2 px-3 py-3">
+          <div className="flex size-6 items-center justify-center rounded-md bg-foreground text-xs font-semibold text-background">
+            B
+          </div>
+          <span className="text-sm font-semibold text-foreground">Bang Storage</span>
+        </div>
+        <button
+          type="button"
+          onClick={() => setIsCommandOpen(true)}
+          className="mx-3 flex items-center gap-2 rounded-md border border-border bg-background px-2.5 py-1.5 text-left text-xs text-muted-foreground hover:bg-accent"
+        >
+          <SearchIcon className="size-3.5" />
+          검색
+          <span className="ml-auto text-[10px]">⌘F</span>
+        </button>
+        <nav className="mt-4 flex-1 space-y-0.5 overflow-y-auto px-2">
+          <button
+            type="button"
+            onClick={() => handleRefresh("", false)}
+            className={cn(
+              "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm",
+              isRoot ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent hover:text-foreground",
+            )}
+          >
+            <FolderIcon className="size-4" /> 루트
+          </button>
+          {rootFolders.filter((folder) => !folder.startsWith(".keep")).length > 0 && (
+            <p className="mt-4 px-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">폴더</p>
+          )}
+          {rootFolders
+            .filter((folder) => !folder.startsWith(".keep"))
+            .map((folder) => (
+              <button
+                key={`sidebar-${folder}`}
+                type="button"
+                onClick={() => handleRefresh(folder, false)}
+                className={cn(
+                  "flex w-full items-center gap-2 truncate rounded-md px-2 py-1.5 text-sm",
+                  currentFolder === folder
+                    ? "bg-accent text-foreground"
+                    : "text-muted-foreground hover:bg-accent hover:text-foreground",
+                )}
+              >
+                <FolderIcon className="size-4 flex-shrink-0" />
+                <span className="truncate">{folder}</span>
+              </button>
+            ))}
+        </nav>
+        <div className="border-t border-border p-2">
+          <Button variant="ghost" onClick={handleLogout} className="w-full justify-start gap-2 text-muted-foreground">
+            <LogOutIcon className="size-4" /> 로그아웃
+          </Button>
+        </div>
+      </aside>
+
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+        <header className="flex flex-shrink-0 items-center gap-3 border-b border-border px-4 py-3 sm:px-6">
+          <span className="text-sm font-semibold text-foreground sm:hidden">Bang Storage</span>
+          <nav className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto text-sm text-muted-foreground">
+            <button
+              type="button"
+              onClick={() => handleRefresh("", false)}
+              className="flex-shrink-0 hover:text-foreground"
+            >
+              루트
+            </button>
+            {breadcrumbSegments.map((segment) => (
+              <span key={segment.path} className="flex flex-shrink-0 items-center gap-1">
+                <span className="text-border">/</span>
+                <button
+                  type="button"
+                  onClick={() => handleRefresh(segment.path, false)}
+                  className="hover:text-foreground"
+                >
+                  {segment.label}
+                </button>
+              </span>
+            ))}
+          </nav>
+          <Button variant="ghost" size="icon" onClick={handleLogout} aria-label="로그아웃" className="sm:hidden">
+            <LogOutIcon className="size-4" />
+          </Button>
+        </header>
+
+        <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 py-4 sm:px-6">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h1 className="text-xl font-semibold text-foreground sm:text-2xl">{currentLabel}</h1>
+              <p className="text-xs text-muted-foreground sm:text-sm">파일 {displayFileCountLabel}개</p>
+            </div>
+            <Button type="button" size="sm" className="gap-2" onClick={() => setIsFolderDialogOpen(true)}>
+              <FolderPlusIcon className="size-4" /> 새 폴더
             </Button>
           </div>
-        </section>
 
-        <section className="flex min-h-0 flex-1 flex-col border border-border bg-card p-4">
-          <div className="flex h-full min-h-0 flex-col gap-4 overflow-hidden">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div>
-                <h2 className="text-sm font-semibold text-foreground sm:text-base">폴더 탐색</h2>
-                <p className="text-xs text-muted-foreground">{currentLabel || "루트"} 기준으로 이동해요.</p>
-              </div>
-              <div className="flex items-center gap-2">
-                <Button
-                  variant={isRoot ? "default" : "ghost"}
-                  size="sm"
-                  className="gap-2"
-                  onClick={() => handleRefresh("", false)}
-                >
-                  <FolderIcon className="size-4" /> 루트
-                </Button>
-                <Button
-                  type="button"
-                  size="sm"
-                  className="gap-2"
-                  onClick={() => setIsFolderDialogOpen(true)}
-                >
-                  <FolderPlusIcon className="size-4" /> 새 폴더
-                </Button>
-              </div>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-xs text-muted-foreground">{searchSummary}</p>
+            <div className="relative w-full sm:w-64">
+              <SearchIcon className="pointer-events-none absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                type="search"
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
+                placeholder="파일 이름 검색"
+                className="pl-8"
+              />
             </div>
-
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-              <p className="text-xs text-muted-foreground">{searchSummary}</p>
-              <div className="relative w-full sm:w-64">
-                <SearchIcon className="pointer-events-none absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  type="search"
-                  value={searchQuery}
-                  onChange={(event) => setSearchQuery(event.target.value)}
-                  placeholder="파일 이름 검색"
-                  className="pl-8"
-                />
-              </div>
-            </div>
-
-            <div className="mt-2 flex min-h-0 flex-1">
-              <div className="flex h-full min-h-0 flex-1 flex-col rounded-lg border border-border p-3">
-                <div>
-                  <h2 className="text-[15px] font-semibold sm:text-lg">{currentLabel}</h2>
-                  <p className="text-[11px] text-muted-foreground sm:text-sm">파일 {displayFileCountLabel}개</p>
-                </div>
+          </div>
 
                 {selectedCount > 0 && (
                   <div className="mt-3 flex flex-wrap items-center justify-between rounded-md border border-border bg-muted px-3 py-2 text-xs text-muted-foreground sm:text-sm">
@@ -944,16 +1013,12 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
                     <p className="text-sm text-muted-foreground">새 폴더를 만들고 파일을 추가해 보세요.</p>
                   </div>
                 )}
-              </div>
-            </div>
-          </div>
-        </section>
 
-        <section className="hidden flex-shrink-0 border border-border bg-card p-3 sm:block">
-          <div className="flex items-center justify-between">
-            <div>
-              <h2 className="text-lg font-semibold">파일 · 폴더 업로드</h2>
-              <p className="text-sm text-muted-foreground">버튼으로 선택해서 {currentLabel || "루트"}에 저장하세요.</p>
+          <div className="hidden border-t border-border pt-6 sm:block">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-lg font-semibold">파일 · 폴더 업로드</h2>
+                <p className="text-sm text-muted-foreground">버튼으로 선택해서 {currentLabel || "루트"}에 저장하세요.</p>
             </div>
             <UploadCloudIcon className="size-5 text-muted-foreground" />
           </div>
@@ -1036,7 +1101,8 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
               <Progress value={progress} className="h-2" />
             </div>
           )}
-        </section>
+          </div>
+        </div>
       </div>
 
       <div className="fixed bottom-3 left-1/2 z-20 w-full max-w-md -translate-x-1/2 px-3 sm:hidden">
