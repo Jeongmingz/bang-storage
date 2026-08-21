@@ -9,9 +9,11 @@ import {
   useTransition,
 } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import {
   CheckIcon,
   FileUpIcon,
+  FilesIcon,
   FolderIcon,
   FolderPlusIcon,
   LayoutGridIcon,
@@ -794,6 +796,13 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
           >
             <FolderIcon className="size-4" /> 루트
           </button>
+          <p className="mt-4 px-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">도구</p>
+          <Link
+            href="/pdf"
+            className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-muted-foreground hover:bg-accent hover:text-foreground"
+          >
+            <FilesIcon className="size-4" /> PDF 합치기
+          </Link>
           {rootFolders.filter((folder) => !folder.startsWith(".keep")).length > 0 && (
             <p className="mt-4 px-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">폴더</p>
           )}
@@ -849,6 +858,9 @@ export function StorageDashboard({ initialSnapshot, bucketName }: Props) {
           </nav>
           <Button variant="ghost" size="icon" onClick={handleLogout} aria-label="로그아웃" className="sm:hidden">
             <LogOutIcon className="size-4" />
+          </Button>
+          <Button variant="ghost" size="sm" className="sm:hidden" render={<Link href="/pdf" />}>
+            PDF
           </Button>
         </header>
 
